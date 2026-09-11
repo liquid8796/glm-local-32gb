@@ -109,6 +109,12 @@ def main(argv=None):
     sub.add_parser("policy-check", help="Read back Windows CPU/commit quota and run a small child")
     observe = sub.add_parser("monitor", help="Observe GPU and pacing recommendations without controlling GPU")
     observe.add_argument("--seconds", type=float, default=10)
+    experiment = sub.add_parser("probe", help="Run a bounded synthetic FP8 CPU/GPU experiment under a Windows job")
+    experiment.add_argument("--backend", choices=("cpu", "gpu", "hybrid"), default="hybrid")
+    experiment.add_argument("--rows", type=int, default=384)
+    experiment.add_argument("--cols", type=int, default=384)
+    experiment.add_argument("--iterations", type=int, default=3)
+    experiment.add_argument("--seed", type=int, default=7)
     args = parser.parse_args(argv)
     try:
         settings = read_json(args.config)
@@ -117,6 +123,9 @@ def main(argv=None):
             return doctor(settings, args.refresh)
         if args.command == "policy-check":
             return policy_check(settings)
+        if args.command == "probe":
+            from .backend_probe import launch_probe
+            return launch_probe(ROOT, settings, args.backend, args.rows, args.cols, args.iterations, args.seed)
         return monitor(settings, args.seconds)
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)

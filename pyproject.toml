@@ -1,7 +1,7 @@
 [project]
 name = "glm-local-32gb"
-version = "0.1.0"
-description = "GLM checkpoint feasibility audit and Windows resource-control foundation"
+version = "0.2.0"
+description = "GLM feasibility audit and bounded synthetic FP8 CPU/CUDA probes"
 requires-python = ">=3.10"
 dependencies = []
 

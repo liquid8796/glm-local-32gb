@@ -84,13 +84,14 @@ def evaluate(settings, snapshot, hardware, project_root):
     blockers = [
         {"code": "GLM_BACKEND_NOT_IMPLEMENTED", "message":
          "The pinned Kimi engine is CPU-only and cannot execute glm_moe_dsa FP8. "
-         "GLM numerical kernels, graph, tokenizer and CPU/GPU integration are not implemented."},
+         "Synthetic FP8 CPU/CUDA kernels are available, but GLM graph, tensor mapping, "
+         "attention, tokenizer and full-model integration are not implemented."},
         {"code": "RAM_RESIDENT_CAP_UNVERIFIED", "message":
          "Windows Job Object caps committed memory, not total resident memory or OS file cache. "
          "A 32 GB physical RAM ceiling has not been established."},
         {"code": "GPU_PACING_NOT_INTEGRATED", "message":
-         "Cooperative pacing is unit tested; no inference backend feeds telemetry or obeys it yet. "
-         "60% average GPU usage has not been measured or guaranteed."},
+         "Cooperative pacing gates the synthetic FP8 probe. GLM inference is unavailable, "
+         "so the 60% average target under full-model load remains unverified."},
     ]
     if local["missing_shards"] or local["wrong_size_shards"]:
         blockers.append({"code": "CHECKPOINT_INCOMPLETE", "message":

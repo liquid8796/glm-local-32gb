@@ -1,14 +1,24 @@
-# GLM Local 32GB — nền tảng kiểm tra và quản lý tài nguyên
+# GLM Local 32GB — thử nghiệm FP8 CPU/GPU
 
-**Trạng thái 0.1.0: chưa có backend suy luận GLM, chưa chạy được model.**
+**Trạng thái 0.2.0: đã chạy phép thử FP8 trên CPU + GPU thật; chưa có suy luận GLM đầy đủ.**
 
-Project được tạo cho `dealignai/GLM-5.3-CYBERSECURITY-FP8`, giữ đúng checkpoint FP8 theo yêu cầu. Mã Kimi gốc được giữ bằng Git submodule tại `vendor/kimi-k3-in-c`, commit `ac1584a70205c3a00d5346f736834818f4cc11b4`. Các ý tưởng được dùng làm cơ sở là đọc trọng số theo nhu cầu, ngân sách bộ nhớ rõ ràng và kiểm tra tính đúng trước khi benchmark. Project hiện bổ sung công cụ kiểm tra và các thành phần quản lý tài nguyên bằng Python; chưa port graph hoặc kernel Kimi sang GLM.
+Project được tạo cho `dealignai/GLM-5.3-CYBERSECURITY-FP8`, giữ đúng checkpoint FP8 theo yêu cầu. Mã Kimi gốc được giữ bằng Git submodule tại `vendor/kimi-k3-in-c`, commit `ac1584a70205c3a00d5346f736834818f4cc11b4`. Các ý tưởng được dùng làm cơ sở là đọc trọng số theo nhu cầu, ngân sách bộ nhớ rõ ràng và kiểm tra tính đúng trước khi benchmark. Phần mới có kernel FP8 C cho CPU, PTX cho GPU và bộ điều phối thử nghiệm bằng Python. Chưa port graph Kimi sang GLM, chưa tải checkpoint thật.
 
 ## Dùng ngay trên máy này
 
-Yêu cầu Python 3.10+; máy hiện có Python 3.13.12. Không cần cài package Python bên ngoài.
+Yêu cầu Windows x64, Python 3.10+, driver NVIDIA cho phép thử GPU và Visual Studio C++ tools để build phần CPU. Các thành phần này đã có trên máy; DLL CPU đã được build. Không cần package Python bên ngoài hoặc CUDA Toolkit cho bài thử này.
 
 Mở PowerShell tại thư mục project:
+
+```powershell
+.\build-native.bat
+.\glm.bat probe --backend hybrid
+.\test-native.bat
+```
+
+Double-click `probe.bat` để chạy thử mặc định và giữ cửa sổ mở. Lần chạy sẽ tự tạo file trọng số giả lập khoảng 144 KiB; không dùng model thật. Báo cáo ở `reports/backend-probe-latest.md`.
+
+Các công cụ kiểm tra vẫn hoạt động:
 
 ```powershell
 .\glm.bat doctor
@@ -24,10 +34,12 @@ Hoặc double-click `doctor.bat` để xem báo cáo và giữ cửa sổ mở. 
 - `policy-check`: tạo Job Object, đọc lại hạn mức đã cài và chạy một tiến trình Python nhỏ. Kết quả lưu tại `reports/policy-check.json`.
 - `monitor`: chỉ quan sát GPU và hiển thị đề xuất điều tiết; **không điều khiển GPU**. Kết quả lưu tại `reports/gpu-observation.json`.
 - `test.bat`: chạy unit test và kiểm thử Job Object thực trên Windows.
+- `probe`: đọc từng khối FP8 tối đa 128×128 từ file giả lập, chia các nhóm hàng đầu ra cho CPU/GPU, đối chiếu tham chiếu độc lập và đo tài nguyên trong worker đã được gắn Job Object.
+- `test-native.bat`: bật thêm kiểm thử chạy DLL C và CUDA thật. Thiết bị/compiler bị thiếu sẽ báo lỗi ở những test được yêu cầu; không chuyển ngầm sang CPU.
 
 Hiện không có lệnh chat hay lệnh suy luận. `doctor` luôn báo `BLOCKED` cho đến khi backend, kiểm chứng nội dung checkpoint và kiểm chứng tài nguyên được triển khai. Sửa trường `backend_status` trong JSON không mở khóa trạng thái này.
 
-Kiểm chứng ngày 2026-09-11: **55 test đạt**, policy readback xác nhận CPU 70% / commit 32.000.000.000 byte; launcher giữ đúng exit code 2 khi chưa sẵn sàng. Đã quan sát GPU thật trong 5 giây khi không chạy model. Các kiểm tra này chỉ xác minh công cụ hỗ trợ.
+Kiểm chứng ngày 2026-09-11: **137 test đạt** khi bật native CPU/CUDA. Phép thử hybrid 384×384, 3 lượt đã đạt trên CPU và RTX 3070 thật; sai số lớn nhất khoảng 3,8e-6. Policy readback xác nhận CPU 70% / commit 32.000.000.000 byte. [Chi tiết cách thử và giới hạn kết luận](docs/FP8-PROBE.md).
 
 ## Cấu hình đã chốt
 
@@ -38,11 +50,11 @@ Sửa `config/local.json` để thay đổi thư mục model hoặc giảm ngân
 | Giữ model FP8 | Revision `5915c1b88f998a9c1e1a0c83688e285a08ae3ca5` | Chỉ tải metadata; chưa tải trọng số |
 | RAM tối đa 32 GB | 32.000.000.000 byte | Job Object giới hạn **committed memory**; chưa chứng minh trần RAM vật lý |
 | CPU tối đa 70% | CPU hard cap 70% cho job | Đã đọc lại policy và kiểm thử tiến trình con |
-| GPU trung bình khoảng 60% | Cửa sổ 10 giây, cho phép tăng ngắn hạn | Bộ đề xuất pacing đã unit test; chưa nối với suy luận |
+| GPU trung bình khoảng 60% | Cửa sổ 10 giây, cho phép tăng ngắn hạn | Pacing đã áp dụng trước mỗi khối GPU trong phép thử nhỏ; chưa kiểm chứng với GLM |
 
 CPU quota áp dụng cho các tiến trình trong job, tính theo khoảng lập lịch của Windows. Các ứng dụng khác vẫn có thể làm CPU toàn máy vượt 70%. Job cha có thể siết thêm quota. Job memory tính commit, không bao gồm đầy đủ file-backed resident pages, cache hệ điều hành hoặc mọi phần cấp phát trong driver. Không được diễn giải nó thành bảo đảm tổng RAM của máy dưới 32 GB. 32 GB ở đây bằng khoảng 29,80 GiB.
 
-Pacing cần backend chủ động dừng gửi thêm công việc ở ranh giới giữa các khối tính toán và tiếp tục lấy mẫu. Mất dữ liệu đo, dữ liệu cũ hoặc chưa đủ thời gian quan sát đều trả về `allow_work=False`. Không ngắt kernel đang chạy. Thời gian chờ chỉ là đề xuất heuristic, không bảo đảm mức trung bình nếu backend không tuân thủ hoặc ứng dụng khác dùng GPU.
+Pacing dừng gửi thêm công việc ở ranh giới giữa các khối tính toán và tiếp tục lấy mẫu. Mất dữ liệu đo, dữ liệu cũ hoặc chưa đủ thời gian quan sát đều chặn gửi thêm công việc. Quá 10 giây không được phép tiếp tục thì phép thử báo lỗi. Không ngắt kernel đang chạy. Cơ chế là heuristic, không bảo đảm mức trung bình khi ứng dụng khác dùng GPU. Phép thử rất ngắn nên số đo GPU không phải benchmark khả năng giữ tải 60%.
 
 ## Kết quả kiểm tra ngày 2026-09-11
 
@@ -62,6 +74,12 @@ GLM và Kimi có graph khác nhau. Kimi hiện chỉ chạy CPU. GPU này cần 
 | `glm_local/audit.py` | Kiểm tra ngân sách, shard còn thiếu và những điều kiện chưa đáp ứng |
 | `glm_local/winjob.py` | Tạo child suspended, gắn job trước khi resume, cleanup cả cây tiến trình |
 | `glm_local/pacing.py` | Trung bình theo thời gian và đề xuất chờ ở ranh giới tính toán |
+| `native/fp8_cpu.c` | Primitive CPU C, giải mã E4M3FN rồi nhân/cộng FP32 |
+| `native/fp8_matvec.ptx` | Primitive GPU với cách tính FP32 tương ứng |
+| `glm_local/backend_probe.py` | Phối hợp CPU/GPU với dữ liệu giả lập và đối chiếu tham chiếu |
+| `glm_local/synthetic_fp8.py` | Fixture riêng có kích thước giới hạn; không đọc safetensors |
+| `glm_local/gpu_gate.py` | Đọc telemetry và chặn gửi thêm khối GPU khi cần chờ |
+| `glm_local/process_metrics.py` | Đọc RSS/private commit/CPU của worker qua Win32 |
 | `docs/model-metadata.json` | Snapshot manifest đã kiểm tra, để dùng offline |
 | `docs/BACKEND.md` | Phần backend còn phải phát triển và các điều kiện nghiệm thu |
 

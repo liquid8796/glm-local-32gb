@@ -1,6 +1,6 @@
 # Phần suy luận còn thiếu
 
-Đây là ghi nhận khoảng cách kỹ thuật và điều kiện nghiệm thu, không phải backend có thể chạy. Mục tiêu cuối cùng của người dùng **chưa hoàn tất**.
+Đây là ghi nhận khoảng cách kỹ thuật và điều kiện nghiệm thu cho GLM. Bản 0.2.0 có phép thử số học FP8 CPU/GPU chạy được với dữ liệu giả lập; mục tiêu suy luận model đầy đủ **chưa hoàn tất**.
 
 ## Khác biệt đã kiểm tra
 
@@ -17,9 +17,9 @@ Không thể đổi vài hằng số hoặc tensor name để biến engine Kimi
 
 ## Những phần cần triển khai trước khi gọi là chạy được
 
-1. **Backend toán học:** graph GLM đúng config, tensor mapping, tokenizer/chat template, positional encoding, attention/indexer, expert routing và đường FP8 phù hợp phần cứng. Đối chiếu tensor và logits bằng dữ liệu thử nhỏ cùng runtime tham chiếu. Mọi thành phần này hiện chưa triển khai.
-2. **Đọc trọng số theo ngân sách:** chỉ nạp phần cần tính, quản lý vòng đời buffer và cache; đo riêng commit, resident memory, memory do driver và file cache. Phải tính activation/KV/buffer tạm vào 32 GB. Có thể giữ byte FP8 trên đĩa trong khi dùng buffer tính toán có kiểu khác. Chưa có đường này trong project.
-3. **Kết hợp CPU/GPU:** scheduler và backend phải trực tiếp tuân thủ ngân sách, đồng bộ buffer/device và gọi pacing ở ranh giới phù hợp. Hạn mức VRAM và giới hạn công suất không thay thế mục tiêu 60% GPU compute. Chưa có CUDA backend hoặc phép đo dưới tải.
+1. **Backend toán học:** graph GLM đúng config, tensor mapping, tokenizer/chat template, positional encoding, attention/indexer và expert routing còn thiếu. Primitive nhân ma trận-vector FP8 theo từng khối đã được đối chiếu tham chiếu độc lập trên CPU/GPU; điều đó chưa xác minh tensor graph hay logits của GLM.
+2. **Đọc trọng số theo ngân sách:** bài thử đã đọc khối FP8 từ định dạng fixture riêng, mỗi lần đọc tối đa 16 KiB, và đo RSS/commit của worker. Chưa có reader checkpoint thật, cache trọng số, quản lý activation/KV hoặc chứng minh trần RAM vật lý của toàn bộ model.
+3. **Kết hợp CPU/GPU:** bài thử chia các nhóm hàng đầu ra cho CPU và GPU, đồng bộ mỗi phép tính, áp dụng pacing trước từng khối GPU. Chưa có scheduler cho graph GLM hoặc benchmark đủ dài để kiểm chứng mục tiêu sử dụng GPU dưới tải model. Hạn mức VRAM và giới hạn công suất không thay thế mục tiêu 60% GPU compute.
 4. **Kiểm chứng full checkpoint:** đủ 282 shard, kiểm tra nội dung/revision, sinh token trên model đầy đủ, so sánh với tham chiếu và đo RAM/CPU/GPU trong prefill/decode nhiều độ dài. Kiểm tra kích thước file chỉ là bước ban đầu, không chứng minh trọng số đúng hay inference đúng.
 
 Trước khi có các bằng chứng trên, không dùng kết quả unit test, policy readback hay quan sát GPU lúc nhàn rỗi làm bằng chứng model đã chạy trong giới hạn yêu cầu.

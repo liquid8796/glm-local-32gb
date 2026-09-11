@@ -1,0 +1,90 @@
+// Generic bounded E4M3FN matrix-vector arithmetic; no model implementation.
+// PTX 7.0 targets Ampere or newer and needs only the NVIDIA driver JIT.
+// One row per thread. Inputs are validated by cuda_probe.py before launch.
+.version 7.0
+.target sm_80
+.address_size 64
+
+.visible .entry fp8_matvec_tile(
+    .param .u64 weights,
+    .param .u64 vector,
+    .param .u64 output,
+    .param .u32 rows,
+    .param .u32 cols,
+    .param .f32 scale
+)
+{
+    .reg .pred %p<5>;
+    .reg .b32 %r<20>;
+    .reg .b64 %rd<12>;
+    .reg .f32 %f<8>;
+
+    ld.param.u64 %rd0, [weights];
+    ld.param.u64 %rd1, [vector];
+    ld.param.u64 %rd2, [output];
+    ld.param.u32 %r0, [rows];
+    ld.param.u32 %r1, [cols];
+    ld.param.f32 %f0, [scale];
+    mov.u32 %r2, %ctaid.x;
+    mov.u32 %r3, %ntid.x;
+    mov.u32 %r4, %tid.x;
+    mad.lo.u32 %r5, %r2, %r3, %r4;
+    setp.ge.u32 %p0, %r5, %r0;
+    @%p0 bra DONE;
+
+    mul.wide.u32 %rd3, %r5, %r1;
+    add.u64 %rd4, %rd0, %rd3;
+    mov.u32 %r6, 0;
+    mov.f32 %f1, 0f00000000;
+
+LOOP:
+    cvt.u64.u32 %rd5, %r6;
+    add.u64 %rd6, %rd4, %rd5;
+    ld.global.u8 %r7, [%rd6];
+    and.b32 %r8, %r7, 127;
+    and.b32 %r9, %r7, 128;
+    shl.b32 %r9, %r9, 24;
+    and.b32 %r10, %r7, 7;
+    shr.u32 %r11, %r8, 3;
+    setp.eq.u32 %p1, %r8, 127;
+    @%p1 bra NAN_VALUE;
+    setp.eq.u32 %p2, %r11, 0;
+    @%p2 bra SUBNORMAL;
+
+    // Construct the exact IEEE FP32 bits of a normal E4M3FN number.
+    add.u32 %r12, %r11, 120;
+    shl.b32 %r12, %r12, 23;
+    shl.b32 %r13, %r10, 20;
+    or.b32 %r12, %r12, %r13;
+    or.b32 %r12, %r12, %r9;
+    mov.b32 %f2, %r12;
+    bra DECODED;
+
+SUBNORMAL:
+    cvt.rn.f32.u32 %f2, %r10;
+    mul.rn.f32 %f2, %f2, 0f3b000000; // mantissa * 2^-9
+    mov.b32 %r12, %f2;
+    or.b32 %r12, %r12, %r9; // preserve negative zero during decode
+    mov.b32 %f2, %r12;
+    bra DECODED;
+
+NAN_VALUE:
+    mov.f32 %f2, 0f7fc00000; // host rejects these bytes; defensive propagation
+
+DECODED:
+    mul.wide.u32 %rd7, %r6, 4;
+    add.u64 %rd8, %rd1, %rd7;
+    ld.global.f32 %f3, [%rd8];
+    mul.rn.f32 %f4, %f2, %f0;
+    mul.rn.f32 %f5, %f4, %f3;
+    add.rn.f32 %f1, %f1, %f5; // explicit rounding, no FMA contraction
+    add.u32 %r6, %r6, 1;
+    setp.lt.u32 %p3, %r6, %r1;
+    @%p3 bra LOOP;
+
+    mul.wide.u32 %rd9, %r5, 4;
+    add.u64 %rd10, %rd2, %rd9;
+    st.global.f32 [%rd10], %f1;
+DONE:
+    ret;
+}

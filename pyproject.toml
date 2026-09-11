@@ -1,9 +1,12 @@
 [project]
 name = "glm-local-32gb"
-version = "0.2.0"
-description = "GLM feasibility audit and bounded synthetic FP8 CPU/CUDA probes"
+version = "0.3.0"
+description = "GLM feasibility audit and fixed synthetic CPU/CUDA decoder validation"
 requires-python = ">=3.10"
 dependencies = []
+
+[project.optional-dependencies]
+validation = ["numpy>=2.0,<3.0"]
 
 [tool.ruff]
 line-length = 100

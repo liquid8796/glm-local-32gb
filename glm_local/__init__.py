@@ -1,3 +1,3 @@
-"""Feasibility tools and synthetic CPU/CUDA FP8 probes; no GLM inference graph."""
+"""Synthetic bounded CPU/CUDA decoder experiments; no real-checkpoint runtime."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

@@ -115,6 +115,11 @@ def main(argv=None):
     experiment.add_argument("--cols", type=int, default=384)
     experiment.add_argument("--iterations", type=int, default=3)
     experiment.add_argument("--seed", type=int, default=7)
+    miniature = sub.add_parser("mini", help="Validate a fixed synthetic two-layer decoder, not a real checkpoint")
+    miniature.add_argument("--backend", choices=("cpu", "hybrid"), default="hybrid")
+    miniature.add_argument("--lengths", default="8,32,64", help="1-4 increasing prompt lengths, comma separated")
+    miniature.add_argument("--generate", type=int, default=4)
+    miniature.add_argument("--seed", type=int, default=7)
     args = parser.parse_args(argv)
     try:
         settings = read_json(args.config)
@@ -126,6 +131,10 @@ def main(argv=None):
         if args.command == "probe":
             from .backend_probe import launch_probe
             return launch_probe(ROOT, settings, args.backend, args.rows, args.cols, args.iterations, args.seed)
+        if args.command == "mini":
+            from .mini_run import launch_mini
+            lengths = [int(value) for value in args.lengths.split(",")]
+            return launch_mini(ROOT, settings, args.backend, lengths, args.generate, args.seed)
         return monitor(settings, args.seconds)
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)

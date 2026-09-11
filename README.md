@@ -1,6 +1,6 @@
-# GLM Local 32GB — mô hình thu nhỏ CPU/GPU
+# GLM Local 32GB — đối chiếu decoder CPU/GPU
 
-**Trạng thái 0.3.0: mô hình 2 layer với trọng số giả lập đã chạy và sinh ID token trên CPU/GPU; chưa chạy checkpoint GLM thật.**
+**Trạng thái 0.4.0: decoder giả lập đã khớp Transformers chính thức trong sai số công bố, tới 128 token; chưa chạy checkpoint GLM thật.**
 
 Project được tạo cho `dealignai/GLM-5.3-CYBERSECURITY-FP8`, giữ đúng checkpoint FP8 theo yêu cầu. Mã Kimi gốc được giữ bằng Git submodule tại `vendor/kimi-k3-in-c`, commit `ac1584a70205c3a00d5346f736834818f4cc11b4`. Các ý tưởng được dùng làm cơ sở là đọc trọng số theo nhu cầu, ngân sách bộ nhớ rõ ràng và kiểm tra tính đúng trước khi benchmark. Phần mới có kernel FP8 C cho CPU, PTX cho GPU và bộ điều phối thử nghiệm bằng Python. Chưa port graph Kimi sang GLM, chưa tải checkpoint thật.
 
@@ -12,9 +12,11 @@ Mở PowerShell tại thư mục project:
 
 ```powershell
 .\build-native.bat
-.\glm.bat mini --backend hybrid
-.\test-native.bat
+.\glm.bat parity --backend hybrid
+.\test-reference.bat
 ```
+
+Máy này đã được tạo môi trường `.venv-reference` riêng với Torch CPU và Transformers ghim revision. Double-click `parity.bat` để chạy đối chiếu; báo cáo ở `reports/parity-latest.md`. Trên máy khác chạy `setup-reference.bat` một lần; script chỉ cài thư viện trong môi trường project, không tải checkpoint. [Hướng dẫn đối chiếu chính thức](docs/OFFICIAL-PARITY.md).
 
 Double-click `mini.bat` để thử mô hình thu nhỏ với chuỗi 8, 32 và 64 token, sinh thêm 4 ID mỗi chuỗi. Báo cáo ở `reports/mini-latest.md`. ID token thuộc bộ từ vựng giả lập 32 phần tử, không phải văn bản có nghĩa. [Hướng dẫn và các giới hạn](docs/MINI-DECODER.md).
 
@@ -41,10 +43,14 @@ Hoặc double-click `doctor.bat` để xem báo cáo và giữ cửa sổ mở. 
 - `probe`: đọc từng khối FP8 tối đa 128×128 từ file giả lập, chia các nhóm hàng đầu ra cho CPU/GPU, đối chiếu tham chiếu độc lập và đo tài nguyên trong worker đã được gắn Job Object.
 - `test-native.bat`: bật thêm kiểm thử chạy DLL C và CUDA thật. Thiết bị/compiler bị thiếu sẽ báo lỗi ở những test được yêu cầu; không chuyển ngầm sang CPU.
 - `mini`: kiểm tra decoder có MLA, RoPE, chọn vị trí chú ý thưa, MoE, cache, residual và đầu ra dự đoán token. Engine xử lý từng token; tham chiếu NumPy tính lại cả chuỗi bằng triển khai riêng.
+- `parity`: đối chiếu cùng fixture với graph Transformers nguyên trạng trên CPU FP32, gồm 12 hidden states mỗi token, logits và lựa chọn attention/expert. Phía native hybrid vẫn chạy output head trên GPU.
+- `test-reference.bat`: kiểm tra provenance rồi chạy toàn bộ test, bật cả Torch/Transformers, C và CUDA.
 
 Hiện chưa có lệnh chat hoặc suy luận checkpoint thật. `doctor` tiếp tục báo `BLOCKED` cho đến khi có kiểm chứng tương thích model và giới hạn tài nguyên đầy đủ. Sửa trường `backend_status` trong JSON không mở khóa trạng thái này.
 
 Kiểm chứng ngày 2026-09-11: **216 test đạt** khi bật native CPU/CUDA và tham chiếu NumPy. Decoder thu nhỏ đã khớp logits, lựa chọn attention/expert và ID sinh độc lập ở cả chuỗi 120 + 8 token. Sai số logits lớn nhất khoảng 1,18e-7; RSS worker đỉnh 138,48 MiB trong lần kiểm tra biên. Policy readback xác nhận CPU 70% / commit 32.000.000.000 byte. [Chi tiết miniature](docs/MINI-DECODER.md) và [phép thử FP8 trước đó](docs/FP8-PROBE.md).
+
+Cập nhật 2026-09-12: **251 test đạt** trong môi trường tham chiếu, gồm graph Transformers chính thức và helper top-k native. Ca official hybrid tới 128 token khớp cả 12 hidden states/token; sai số logits lớn nhất khoảng 2,39e-7. [Kết quả và phạm vi kiểm chứng](docs/OFFICIAL-PARITY.md).
 
 ## Cấu hình đã chốt
 
@@ -89,6 +95,10 @@ GLM và Kimi có graph khác nhau. Kimi hiện chỉ chạy CPU. GPU này cần 
 | `glm_local/mini_reference.py` | Tham chiếu NumPy độc lập, tính cả chuỗi, đọc fixture bằng loader riêng |
 | `glm_local/mini_weights.py` | Tạo 9.440 byte trọng số giả lập; kiểm tra hash và chỉ đọc ma trận cần dùng |
 | `glm_local/mini_run.py` | Đối chiếu logits, lựa chọn attention/expert, hệ số MoE và ID sinh độc lập |
+| `glm_local/official_reference.py` | Ánh xạ toàn bộ fixture sang model chính thức; lấy kết quả bằng hooks |
+| `glm_local/parity_run.py` | Đối chiếu hai graph dưới Windows Job Object, lưu báo cáo đầy đủ |
+| `native/topk_cpu.cpp` | Bộ chọn FP32 top-k có cách xử lý bằng điểm tương thích runtime đã ghim |
+| `config/reference-lock.json` | Revision, phiên bản và hash source cho tham chiếu chính thức |
 | `docs/model-metadata.json` | Snapshot manifest đã kiểm tra, để dùng offline |
 | `docs/BACKEND.md` | Phần backend còn phải phát triển và các điều kiện nghiệm thu |
 

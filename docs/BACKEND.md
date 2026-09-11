@@ -1,6 +1,6 @@
 # Phần suy luận còn thiếu
 
-Đây là ghi nhận khoảng cách kỹ thuật và điều kiện nghiệm thu cho GLM. Bản 0.3.0 có decoder thu nhỏ 2 layer chạy được với dữ liệu giả lập và khớp tham chiếu NumPy độc lập; mục tiêu suy luận checkpoint đầy đủ **chưa hoàn tất**.
+Đây là ghi nhận khoảng cách kỹ thuật và điều kiện nghiệm thu cho GLM. Bản 0.4.0 có decoder thu nhỏ khớp cả NumPy và graph Transformers chính thức trong phạm vi fixture/kiểu dữ liệu đã ghi rõ; mục tiêu suy luận checkpoint đầy đủ **chưa hoàn tất**.
 
 ## Khác biệt đã kiểm tra
 
@@ -17,7 +17,7 @@ Không thể đổi vài hằng số hoặc tensor name để biến engine Kimi
 
 ## Những phần cần triển khai trước khi gọi là chạy được
 
-1. **Backend toán học:** MLA, RoPE, DSA/index sharing, dense/MoE/shared FFN, norm/residual và logits đã có trong cấu hình giả lập cố định. Cần đối chiếu với Transformers chính thức trên cùng trọng số giả lập và kiểu dữ liệu rõ ràng, rồi mới xác minh config/tensor mapping/tokenizer của model thật. NumPy float64 độc lập chưa phải bằng chứng tương thích runtime chính thức.
+1. **Backend toán học:** cấu hình giả lập đã đối chiếu với Transformers nguyên trạng trên CPU FP32, gồm 12 trạng thái trung gian/token và lựa chọn attention/expert. Sai số được kiểm tra theo từng phần tử. Cần xác minh dtype/scale/tensor mapping/tokenizer ở checkpoint thật; kết quả nhỏ chưa bảo đảm tương thích cấu hình 78 layer.
 2. **Đọc trọng số theo ngân sách:** miniature có reader riêng đọc theo ma trận, kiểm tra hash, không cache payload FP8 và cache K/V có trần 128 token. Chưa có reader safetensors, ánh xạ scale block checkpoint, mô hình cấp phát activation/cache ở kích thước thật hoặc bằng chứng trần RAM vật lý cho toàn bộ model.
 3. **Kết hợp CPU/GPU:** phép thử ma trận chia nhóm hàng; decoder thu nhỏ cho CPU tính các projection nội bộ và GPU tính output head. Có pacing trước mỗi lần gửi GPU. Chưa có scheduler tối ưu cho GLM hoặc benchmark đủ dài để kiểm chứng mục tiêu sử dụng GPU dưới tải model.
 4. **Kiểm chứng full checkpoint:** đủ 282 shard, kiểm tra nội dung/revision, sinh token trên model đầy đủ, so sánh với tham chiếu và đo RAM/CPU/GPU trong prefill/decode nhiều độ dài. Kiểm tra kích thước file chỉ là bước ban đầu, không chứng minh trọng số đúng hay inference đúng.

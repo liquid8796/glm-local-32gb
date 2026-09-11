@@ -57,13 +57,21 @@ class MiniDecoder:
     ``cache_bytes`` counts allocated array('d') payload only, excluding Python
     object headers, transient arithmetic, weights and the bounded trace list.
     ``cache_used_bytes`` is the logical occupied prefix of those same arrays.
+    ``capture_states=True`` adds independent copies of selected 16-value hidden
+    states to each trace record for numerical validation of this fixed fixture.
     """
 
-    def __init__(self, weights, linear):
+    def __init__(self, weights, linear, *, capture_states=False, attention_topk=None):
+        if type(capture_states) is not bool:
+            raise ValueError("Miniature capture_states must be a bool")
         if not callable(linear):
             raise ValueError("Miniature linear adapter must be callable")
+        if attention_topk is not None and not callable(attention_topk):
+            raise ValueError("Optional attention top-k must be callable")
+        self._attention_topk = attention_topk or _topk
         self.weights = weights
         self.linear = linear
+        self._capture_states = capture_states
         self._shapes = matrix_shapes()
         self._position = 0
         self.trace = []
@@ -122,7 +130,13 @@ class MiniDecoder:
             for token in range(self._position + 1):
                 dot = math.fsum(q[d] * self._index_keys[token * 8 + d] for d in range(8))
                 scores[token] += multiplier * max(0.0, dot / math.sqrt(8.0))
-        return _topk(scores, min(SPEC["index_topk"], self._position + 1))
+        count = min(SPEC["index_topk"], self._position + 1)
+        indices = self._attention_topk(scores, count)
+        if (not isinstance(indices, (list, tuple)) or len(indices) != count
+                or any(type(i) is not int or not 0 <= i <= self._position for i in indices)
+                or len(set(indices)) != count):
+            raise ValueError("Attention top-k returned invalid indices")
+        return list(indices)
 
     def _attention(self, layer, hidden, previous_indices):
         prefix = f"layer.{layer}."
@@ -188,13 +202,22 @@ class MiniDecoder:
         if len(hidden) != SPEC["hidden"] or any(not math.isfinite(value) for value in hidden):
             raise ValueError("Invalid synthetic embedding")
         record = {"position": self._position, "token": token, "layers": []}
+        states = {"embedding": list(hidden)} if self._capture_states else None
         previous_indices = None
         for layer in range(2):
             prefix = f"layer.{layer}."
             normalized = self._norm(prefix + "in_norm", hidden, SPEC["norm_eps"])
+            if states is not None:
+                states[prefix + "input_norm"] = list(normalized)
             attention, selected, probabilities = self._attention(layer, normalized, previous_indices)
+            if states is not None:
+                states[prefix + "attention_output"] = list(attention)
             hidden = [base + delta for base, delta in zip(hidden, attention)]
+            if states is not None:
+                states[prefix + "post_attention"] = list(hidden)
             normalized = self._norm(prefix + "post_norm", hidden, SPEC["norm_eps"])
+            if states is not None:
+                states[prefix + "post_attention_norm"] = list(normalized)
             layer_record = {"layer": layer, "selected_indices": selected,
                             "attention_probabilities": probabilities}
             if layer == 0:
@@ -205,9 +228,16 @@ class MiniDecoder:
                 layer_record.update(routed_experts=experts, router_weights=weights)
                 record.update(routed_experts=experts, router_weights=weights)
             hidden = [base + delta for base, delta in zip(hidden, feed_forward)]
+            if states is not None:
+                states[prefix + "output"] = list(hidden)
             record["layers"].append(layer_record)
             previous_indices = selected
-        logits = self._project("lm_head", self._norm("final_norm", hidden, SPEC["norm_eps"]))
+        normalized = self._norm("final_norm", hidden, SPEC["norm_eps"])
+        if states is not None:
+            states["final_norm"] = list(normalized)
+        logits = self._project("lm_head", normalized)
+        if states is not None:
+            record["hidden_states"] = states
         self.trace.append(record)
         self._position += 1
         return logits

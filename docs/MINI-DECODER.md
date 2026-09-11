@@ -50,4 +50,4 @@ Projection native tính FP32. Nonlinear/cache engine và oracle dùng float64. C
 
 ## Bước tiếp theo
 
-Đối chiếu **cùng bộ trọng số giả lập** với Transformers chính thức, so sánh thêm hidden state trung gian và quy định chính xác dtype. Sau đó mới phát triển reader/tensor mapping cho checkpoint thật và đo tài nguyên ở kích thước lớn. Bước đối chiếu chính thức chưa cần tải checkpoint 755 GB hoặc mua thêm ổ đĩa.
+Bản 0.4.0 đã thêm [đối chiếu Transformers chính thức](OFFICIAL-PARITY.md). Lệnh `mini` vẫn giữ quy tắc bằng điểm ưu tiên chỉ số nhỏ để tái lập kiểm chứng NumPy ban đầu; `parity` dùng bộ chọn native tương thích runtime đã ghim. Tiếp theo là reader safetensors có giới hạn đọc và đối chiếu block scale bằng fixture nhỏ, trước khi xác minh tensor mapping ở checkpoint thật.

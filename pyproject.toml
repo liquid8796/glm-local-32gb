@@ -1,7 +1,7 @@
 [project]
 name = "glm-local-32gb"
-version = "0.3.0"
-description = "GLM feasibility audit and fixed synthetic CPU/CUDA decoder validation"
+version = "0.4.0"
+description = "Fixed synthetic CPU/CUDA decoder with pinned official Transformers comparison"
 requires-python = ">=3.10"
 dependencies = []
 

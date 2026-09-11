@@ -78,3 +78,15 @@ if ($compileResult.Stderr) { Write-Output $compileResult.Stderr.TrimEnd() }
 if ($compileResult.ExitCode -ne 0) { throw "C compilation failed with exit code $($compileResult.ExitCode)." }
 if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) { throw 'Compiler succeeded but no DLL was produced.' }
 Write-Output "Built: $dll"
+
+$topkSource = Join-Path $projectRoot 'native\topk_cpu.cpp'
+$topkDll = Join-Path $buildRoot 'topk_cpu.dll'
+$topkObject = Join-Path $buildRoot 'topk_cpu.obj'
+$topkLibrary = Join-Path $buildRoot 'topk_cpu.lib'
+$compileStart.Arguments = '/nologo /TP /std:c++17 /EHsc /O2 /W4 /WX /fp:strict /LD /Fo"{0}" /Fe"{1}" "{2}" /link /INCREMENTAL:NO /IMPLIB:"{3}"' -f $topkObject, $topkDll, $topkSource, $topkLibrary
+$topkResult = Invoke-ChildProcess $compileStart
+if ($topkResult.Stdout) { Write-Output $topkResult.Stdout.TrimEnd() }
+if ($topkResult.Stderr) { Write-Output $topkResult.Stderr.TrimEnd() }
+if ($topkResult.ExitCode -ne 0) { throw 'Bounded top-k compatibility build failed.' }
+if (-not (Test-Path -LiteralPath $topkDll -PathType Leaf)) { throw 'No top-k DLL was produced.' }
+Write-Output "Built: $topkDll"

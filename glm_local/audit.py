@@ -85,7 +85,8 @@ def evaluate(settings, snapshot, hardware, project_root):
         {"code": "GLM_BACKEND_NOT_IMPLEMENTED", "message":
          "The pinned Kimi engine is CPU-only and cannot execute glm_moe_dsa FP8. "
          "A fixed synthetic decoder and FP8 CPU/CUDA kernels are available. "
-         "Production GLM checkpoint mapping, dtype-faithful parity, tokenizer and full-model integration remain unverified."},
+         "The miniature also has an official FP32 comparison command. Production GLM checkpoint mapping, "
+         "full dtype fidelity, tokenizer and full-model integration remain unverified."},
         {"code": "RAM_RESIDENT_CAP_UNVERIFIED", "message":
          "Windows Job Object caps committed memory, not total resident memory or OS file cache. "
          "A 32 GB physical RAM ceiling has not been established."},

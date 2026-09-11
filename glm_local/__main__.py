@@ -120,6 +120,11 @@ def main(argv=None):
     miniature.add_argument("--lengths", default="8,32,64", help="1-4 increasing prompt lengths, comma separated")
     miniature.add_argument("--generate", type=int, default=4)
     miniature.add_argument("--seed", type=int, default=7)
+    parity = sub.add_parser("parity", help="Compare the fixed miniature with pinned offline Transformers")
+    parity.add_argument("--backend", choices=("cpu", "hybrid"), default="hybrid")
+    parity.add_argument("--lengths", default="8,32,64")
+    parity.add_argument("--generate", type=int, default=4)
+    parity.add_argument("--seed", type=int, default=7)
     args = parser.parse_args(argv)
     try:
         settings = read_json(args.config)
@@ -135,6 +140,9 @@ def main(argv=None):
             from .mini_run import launch_mini
             lengths = [int(value) for value in args.lengths.split(",")]
             return launch_mini(ROOT, settings, args.backend, lengths, args.generate, args.seed)
+        if args.command == "parity":
+            from .parity_run import launch_parity
+            return launch_parity(ROOT, settings, args.backend, [int(v) for v in args.lengths.split(",")], args.generate, args.seed)
         return monitor(settings, args.seconds)
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)

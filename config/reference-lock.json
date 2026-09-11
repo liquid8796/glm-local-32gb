@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "purpose": "Optional CPU-only Transformers oracle for the fixed invented miniature",
+  "packages": {
+    "torch": "2.14.0+cpu",
+    "numpy": "2.4.6",
+    "transformers": "5.18.0.dev0"
+  },
+  "torch_index_url": "https://download.pytorch.org/whl/cpu",
+  "pypi_index_url": "https://pypi.org/simple",
+  "transformers": {
+    "revision": "3f601734a3580f55484720770850966bba060e4f",
+    "url": "https://github.com/huggingface/transformers/archive/3f601734a3580f55484720770850966bba060e4f.zip",
+    "archive_sha256": "356276eb5f8fe21bf7f913bd66e6231eb21efdda8102de49000c05aed5a9261d",
+    "source_sha256": {
+      "transformers/models/glm_moe_dsa/modeling_glm_moe_dsa.py": "da0030e70764e9dae083cf9f9de54bae661082f04b702386d30dab91c52632f8",
+      "transformers/models/glm_moe_dsa/configuration_glm_moe_dsa.py": "8c8b95bb0ecfcb502f768905964926ea55a83234e4b2f494b6f3b68333891a37"
+    }
+  },
+  "verification": {
+    "source_max_bytes": 2097152,
+    "direct_url_max_bytes": 65536,
+    "scope": "Three package versions, Transformers archive metadata and two source files only; not the entire environment"
+  }
+}

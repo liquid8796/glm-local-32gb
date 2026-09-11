@@ -1,0 +1,12 @@
+{
+  "model_id": "dealignai/GLM-5.3-CYBERSECURITY-FP8",
+  "revision": "5915c1b88f998a9c1e1a0c83688e285a08ae3ca5",
+  "model_directory": "models/GLM-5.3-CYBERSECURITY-FP8",
+  "ram_budget_bytes": 32000000000,
+  "cpu_job_percent": 70,
+  "gpu_index": 0,
+  "gpu_average_target": 0.6,
+  "gpu_window_seconds": 10,
+  "disk_reserve_bytes": 20000000000,
+  "backend_status": "not_implemented"
+}

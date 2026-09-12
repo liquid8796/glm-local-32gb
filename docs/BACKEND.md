@@ -1,6 +1,6 @@
 # Phần suy luận còn thiếu
 
-Đây là ghi nhận khoảng cách kỹ thuật và điều kiện nghiệm thu cho GLM. Bản 0.4.0 có decoder thu nhỏ khớp cả NumPy và graph Transformers chính thức trong phạm vi fixture/kiểu dữ liệu đã ghi rõ; mục tiêu suy luận checkpoint đầy đủ **chưa hoàn tất**.
+Đây là ghi nhận khoảng cách kỹ thuật và điều kiện nghiệm thu cho GLM. Bản 0.5.0 bổ sung reader safetensors và FP8 block scale đã kiểm chứng bằng file thử, bên cạnh decoder thu nhỏ đối chiếu NumPy/Transformers; mục tiêu suy luận checkpoint đầy đủ **chưa hoàn tất**.
 
 ## Khác biệt đã kiểm tra
 
@@ -18,7 +18,7 @@ Không thể đổi vài hằng số hoặc tensor name để biến engine Kimi
 ## Những phần cần triển khai trước khi gọi là chạy được
 
 1. **Backend toán học:** cấu hình giả lập đã đối chiếu với Transformers nguyên trạng trên CPU FP32, gồm 12 trạng thái trung gian/token và lựa chọn attention/expert. Sai số được kiểm tra theo từng phần tử. Cần xác minh dtype/scale/tensor mapping/tokenizer ở checkpoint thật; kết quả nhỏ chưa bảo đảm tương thích cấu hình 78 layer.
-2. **Đọc trọng số theo ngân sách:** miniature có reader riêng đọc theo ma trận, kiểm tra hash, không cache payload FP8 và cache K/V có trần 128 token. Chưa có reader safetensors, ánh xạ scale block checkpoint, mô hình cấp phát activation/cache ở kích thước thật hoặc bằng chứng trần RAM vật lý cho toàn bộ model.
+2. **Đọc trọng số theo ngân sách:** đã có reader safetensors với giới hạn header/read, kiểm tra dtype/offset và adapter FP8 2D + scale F32 128×128. Kiểm chứng aligned blocks với bộ giải mã HF, ragged blocks với phép mở rộng scale độc lập. Cần nối reader này vào decoder nhiều tensor/shard, xác minh tên/shape/scale thực và mô hình cấp phát activation/cache ở kích thước thật. Chưa chứng minh trần RAM vật lý toàn model.
 3. **Kết hợp CPU/GPU:** phép thử ma trận chia nhóm hàng; decoder thu nhỏ cho CPU tính các projection nội bộ và GPU tính output head. Có pacing trước mỗi lần gửi GPU. Chưa có scheduler tối ưu cho GLM hoặc benchmark đủ dài để kiểm chứng mục tiêu sử dụng GPU dưới tải model.
 4. **Kiểm chứng full checkpoint:** đủ 282 shard, kiểm tra nội dung/revision, sinh token trên model đầy đủ, so sánh với tham chiếu và đo RAM/CPU/GPU trong prefill/decode nhiều độ dài. Kiểm tra kích thước file chỉ là bước ban đầu, không chứng minh trọng số đúng hay inference đúng.
 

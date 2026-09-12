@@ -1,6 +1,6 @@
-# GLM Local 32GB — đối chiếu decoder CPU/GPU
+# GLM Local 32GB — decoder và đọc trọng số theo khối
 
-**Trạng thái 0.4.0: decoder giả lập đã khớp Transformers chính thức trong sai số công bố, tới 128 token; chưa chạy checkpoint GLM thật.**
+**Trạng thái 0.5.0: đã có bộ đọc safetensors giới hạn theo khối và kiểm chứng FP8 CPU/GPU bằng file thử; chưa chạy checkpoint GLM thật.**
 
 Project được tạo cho `dealignai/GLM-5.3-CYBERSECURITY-FP8`, giữ đúng checkpoint FP8 theo yêu cầu. Mã Kimi gốc được giữ bằng Git submodule tại `vendor/kimi-k3-in-c`, commit `ac1584a70205c3a00d5346f736834818f4cc11b4`. Các ý tưởng được dùng làm cơ sở là đọc trọng số theo nhu cầu, ngân sách bộ nhớ rõ ràng và kiểm tra tính đúng trước khi benchmark. Phần mới có kernel FP8 C cho CPU, PTX cho GPU và bộ điều phối thử nghiệm bằng Python. Chưa port graph Kimi sang GLM, chưa tải checkpoint thật.
 
@@ -12,11 +12,13 @@ Mở PowerShell tại thư mục project:
 
 ```powershell
 .\build-native.bat
-.\glm.bat parity --backend hybrid
+.\glm.bat storage-check --backend hybrid
 .\test-reference.bat
 ```
 
 Máy này đã được tạo môi trường `.venv-reference` riêng với Torch CPU và Transformers ghim revision. Double-click `parity.bat` để chạy đối chiếu; báo cáo ở `reports/parity-latest.md`. Trên máy khác chạy `setup-reference.bat` một lần; script chỉ cài thư viện trong môi trường project, không tải checkpoint. [Hướng dẫn đối chiếu chính thức](docs/OFFICIAL-PARITY.md).
+
+Double-click `storage-check.bat` để kiểm tra reader với file safetensors do thư viện chính thức tạo. Ba kích thước thử là 256×384, 257×259 và 1×1. Báo cáo ở `reports/storage-latest.md`; [hướng dẫn đọc trọng số theo khối](docs/SAFETENSORS.md).
 
 Double-click `mini.bat` để thử mô hình thu nhỏ với chuỗi 8, 32 và 64 token, sinh thêm 4 ID mỗi chuỗi. Báo cáo ở `reports/mini-latest.md`. ID token thuộc bộ từ vựng giả lập 32 phần tử, không phải văn bản có nghĩa. [Hướng dẫn và các giới hạn](docs/MINI-DECODER.md).
 
@@ -45,12 +47,15 @@ Hoặc double-click `doctor.bat` để xem báo cáo và giữ cửa sổ mở. 
 - `mini`: kiểm tra decoder có MLA, RoPE, chọn vị trí chú ý thưa, MoE, cache, residual và đầu ra dự đoán token. Engine xử lý từng token; tham chiếu NumPy tính lại cả chuỗi bằng triển khai riêng.
 - `parity`: đối chiếu cùng fixture với graph Transformers nguyên trạng trên CPU FP32, gồm 12 hidden states mỗi token, logits và lựa chọn attention/expert. Phía native hybrid vẫn chạy output head trên GPU.
 - `test-reference.bat`: kiểm tra provenance rồi chạy toàn bộ test, bật cả Torch/Transformers, C và CUDA.
+- `storage-check`: đối chiếu metadata/byte tensor, đọc FP8 với scale F32 theo khối 128×128 rồi tính trên CPU/GPU. Không mở checkpoint model thật.
 
 Hiện chưa có lệnh chat hoặc suy luận checkpoint thật. `doctor` tiếp tục báo `BLOCKED` cho đến khi có kiểm chứng tương thích model và giới hạn tài nguyên đầy đủ. Sửa trường `backend_status` trong JSON không mở khóa trạng thái này.
 
 Kiểm chứng ngày 2026-09-11: **216 test đạt** khi bật native CPU/CUDA và tham chiếu NumPy. Decoder thu nhỏ đã khớp logits, lựa chọn attention/expert và ID sinh độc lập ở cả chuỗi 120 + 8 token. Sai số logits lớn nhất khoảng 1,18e-7; RSS worker đỉnh 138,48 MiB trong lần kiểm tra biên. Policy readback xác nhận CPU 70% / commit 32.000.000.000 byte. [Chi tiết miniature](docs/MINI-DECODER.md) và [phép thử FP8 trước đó](docs/FP8-PROBE.md).
 
 Cập nhật 2026-09-12: **251 test đạt** trong môi trường tham chiếu, gồm graph Transformers chính thức và helper top-k native. Ca official hybrid tới 128 token khớp cả 12 hidden states/token; sai số logits lớn nhất khoảng 2,39e-7. [Kết quả và phạm vi kiểm chứng](docs/OFFICIAL-PARITY.md).
+
+Bản 0.5.0: **301 test đạt**. Reader safetensors đọc đúng byte/dtype/shape của sáu tensor thử, FP8 block matvec đạt trên CPU và GPU, sai số lớn nhất khoảng 1,85e-6. [Chi tiết reader và giới hạn](docs/SAFETENSORS.md).
 
 ## Cấu hình đã chốt
 
@@ -99,6 +104,10 @@ GLM và Kimi có graph khác nhau. Kimi hiện chỉ chạy CPU. GPU này cần 
 | `glm_local/parity_run.py` | Đối chiếu hai graph dưới Windows Job Object, lưu báo cáo đầy đủ |
 | `native/topk_cpu.cpp` | Bộ chọn FP32 top-k có cách xử lý bằng điểm tương thích runtime đã ghim |
 | `config/reference-lock.json` | Revision, phiên bản và hash source cho tham chiếu chính thức |
+| `glm_local/safetensor_reader.py` | Reader safetensors với header tối đa 1 MiB, mỗi lần đọc tối đa 64 KiB |
+| `glm_local/fp8_blocks.py` | Ánh xạ cặp tensor FP8/scale được chỉ định rõ ràng thành các khối 128×128 |
+| `glm_local/safetensor_fixture.py` | Tạo file thử bằng safetensors chính thức và tham chiếu giải mã độc lập |
+| `glm_local/safetensor_check.py` | Kiểm chứng byte/scale/tính toán native và ghi báo cáo dưới Job Object |
 | `docs/model-metadata.json` | Snapshot manifest đã kiểm tra, để dùng offline |
 | `docs/BACKEND.md` | Phần backend còn phải phát triển và các điều kiện nghiệm thu |
 

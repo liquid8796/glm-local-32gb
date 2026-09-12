@@ -125,6 +125,9 @@ def main(argv=None):
     parity.add_argument("--lengths", default="8,32,64")
     parity.add_argument("--generate", type=int, default=4)
     parity.add_argument("--seed", type=int, default=7)
+    storage = sub.add_parser("storage-check", help="Validate bounded safetensors and FP8 scales using only small synthetic files")
+    storage.add_argument("--backend", choices=("cpu", "hybrid"), default="hybrid")
+    storage.add_argument("--seed", type=int, default=7)
     args = parser.parse_args(argv)
     try:
         settings = read_json(args.config)
@@ -143,6 +146,9 @@ def main(argv=None):
         if args.command == "parity":
             from .parity_run import launch_parity
             return launch_parity(ROOT, settings, args.backend, [int(v) for v in args.lengths.split(",")], args.generate, args.seed)
+        if args.command == "storage-check":
+            from .safetensor_check import launch_check
+            return launch_check(ROOT, settings, args.backend, args.seed)
         return monitor(settings, args.seconds)
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)

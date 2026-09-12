@@ -53,4 +53,4 @@ Kết quả mới nhất: `reports/parity-latest.md`/JSON; mỗi lần chạy c�
 
 ## Tiếp theo
 
-Triển khai reader safetensors với giới hạn đọc rõ ràng, kiểm tra header/offset/dtype và scale FP8 128×128 trên fixture nhỏ do project tạo. Sau khi reader đúng mới đối chiếu tensor mapping thực và thử từng phần checkpoint. Hiện chưa cần tải 755 GB, giải phóng ổ đĩa hoặc mua phần cứng.
+Bản 0.5.0 đã thêm [reader safetensors và kiểm chứng FP8 theo khối](SAFETENSORS.md). Tiếp theo là nối reader vào decoder thu nhỏ qua nhiều tensor/shard giả lập, rồi mới kiểm tra mapping checkpoint thực. Hiện chưa cần tải 755 GB, giải phóng ổ đĩa hoặc mua phần cứng.

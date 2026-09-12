@@ -176,6 +176,27 @@ class MetadataWorkflowTests(unittest.TestCase):
         self.assertEqual(accounting["observed_minus_declared_bytes"], -1)
         self.assertNotIn("tensor_review", report)
 
+    def test_exact_shard_file_total_is_proved_from_all_received_headers(self):
+        source = MemorySource(self.data)
+        source.data["index"]["metadata"]["total_size"] = sum(size for _, size in source.data["headers"].values())
+        report, code, _ = self.run_audit(source)
+        self.assertEqual(code, 0, report)
+        accounting = report["tensor_payload_accounting"]
+        self.assertEqual(accounting["index_size_convention"], "complete_shard_files")
+        self.assertEqual(accounting["validation_status"], "verified")
+        self.assertFalse(accounting["exact_match"])
+        self.assertEqual(accounting["observed_prefix_and_header_bytes"],
+                         sum(len(raw) for raw, _ in source.data["headers"].values()))
+        self.assertTrue(accounting["payload_plus_headers_matches_manifest"])
+
+    def test_near_shard_file_total_is_rejected(self):
+        for delta in (-1, 1):
+            source = MemorySource(self.data)
+            source.data["index"]["metadata"]["total_size"] = sum(size for _, size in source.data["headers"].values()) + delta
+            report, code, _ = self.run_audit(source)
+            self.assertEqual(code, 1)
+            self.assertFalse(report["metadata_structure_verified"])
+
     def test_zero_payload_empty_tensor_satisfies_accounting_without_fp8_claim(self):
         data = deepcopy(self.data)
         filename = "model-00001-of-00001.safetensors"

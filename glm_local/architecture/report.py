@@ -10,6 +10,7 @@ import stat
 from .. import __version__
 from ..checkpoint_http import MetadataError, MAX_SHARDS, MAX_TENSORS, shard_filename, strict_json, validate_target
 from ..checkpoint_snapshot import write_json
+from ..model_profiles import reports_directory
 from ..safetensor_reader import DTYPE_ITEMSIZE, MAX_RANK, MAX_DIMENSION, MAX_INTEGER
 from .mapper import analyze_catalogue
 
@@ -160,6 +161,44 @@ def _coverage(source):
     return coverage
 
 
+def _verify_file_size_convention(run_path, settings, records, declared, observed):
+    """Reconstruct non-payload index totals from captured bytes, never report flags."""
+    from ..checkpoint_snapshot import OfflineMetadataSource
+    from ..checkpoint_schema import validate_manifest, validate_index
+    from ..safetensor_reader import parse_header_bytes
+
+    evidence = OfflineMetadataSource(run_path / "evidence", settings["model_id"], settings["revision"])
+    sizes = validate_manifest(settings["model_id"], settings["revision"],
+                              strict_json(evidence.json_bytes("model")))
+    index = strict_json(evidence.json_bytes("index"))
+    by_shard = validate_index(index, sizes)
+    if index["metadata"]["total_size"] != declared or sum(sizes.values()) != declared:
+        raise MetadataError("Catalogue/index tensor byte accounting differs from captured manifest")
+    if evidence.available_shards() != set(by_shard):
+        raise MetadataError("File-size accounting requires every captured shard header")
+    catalogue = {record["name"]: record for record in records}
+    header_bytes = 0
+    count = 0
+    for name, names in by_shard.items():
+        raw = evidence.header_bytes(name, sizes[name])
+        tensors, _ = parse_header_bytes(raw[8:], sizes[name])
+        if set(tensors) != names:
+            raise MetadataError("Captured header/index tensor set mismatch")
+        header_bytes += len(raw)
+        for tensor_name, tensor in tensors.items():
+            record = catalogue.get(tensor_name)
+            if (record is None or record["shard"] != name or record["dtype"] != tensor.dtype
+                    or tuple(record["shape"]) != tensor.shape or record["nbytes"] != tensor.nbytes
+                    or tuple(record["data_offsets"]) != tensor.data_offsets):
+                raise MetadataError("Catalogue differs from captured shard header")
+            count += 1
+    if count != len(catalogue) or observed + header_bytes != declared:
+        raise MetadataError("Catalogue/index tensor byte accounting has an unexplained difference")
+    return {"index_size_convention": "complete_shard_files", "header_bytes": header_bytes,
+            "tensor_payload_bytes": observed, "shard_file_bytes": declared,
+            "captured_headers_reverified": True}
+
+
 def _analyze_source(root, settings, source_path):
     source, source_evidence, source_identity = _bounded_json(source_path, MAX_REPORT_BYTES, capture=True)
     if source.get("scope") != "checkpoint_metadata_only":
@@ -183,7 +222,7 @@ def _analyze_source(root, settings, source_path):
     if not run_path.is_absolute():
         run_path = root / run_path
     run_path = run_path.resolve()
-    reports_root = (root / "reports" / "metadata").resolve()
+    reports_root = (reports_directory(root, settings) / "metadata").resolve()
     if run_path == reports_root or not run_path.is_relative_to(reports_root):
         raise MetadataError("Referenced metadata run must stay inside reports/metadata")
     path = (run_path / "tensor-catalogue.jsonl").resolve()
@@ -193,9 +232,13 @@ def _analyze_source(root, settings, source_path):
     observed = sum(record["nbytes"] for record in records)
     reported = _integer(source.get("observed_tensor_payload_bytes"), MAX_INTEGER, "observed payload bytes")
     declared = _integer(source.get("declared_tensor_payload_bytes"), MAX_INTEGER, "declared payload bytes")
-    if observed != reported or observed > declared or (coverage["complete"] and observed != declared):
+    if observed != reported or observed > declared:
         raise MetadataError("Catalogue/index tensor byte accounting differs")
-    analysis = analyze_catalogue(records, config, complete=coverage["complete"])
+    accounting = {"index_size_convention": "tensor_payload" if coverage["complete"] else "unresolved"}
+    if coverage["complete"] and observed != declared:
+        accounting = _verify_file_size_convention(run_path, settings, records, declared, observed)
+    analysis = analyze_catalogue(records, config, complete=coverage["complete"],
+                                 model_id=settings["model_id"], revision=settings["revision"])
     source_eligible = status == "PASS" and baseline["matched"] and coverage["complete"]
     if not source_eligible:
         analysis["status"] = "REVIEW_REQUIRED"
@@ -204,8 +247,11 @@ def _analyze_source(root, settings, source_path):
         for group in ("layers", "attention", "moe"):
             if group in analysis:
                 analysis[group]["verified"] = False
-        if "fp8" in analysis:
-            analysis["fp8"]["metadata_verified"] = False
+        for quantization in ("fp8", "nvfp4"):
+            if quantization in analysis:
+                analysis[quantization]["metadata_verified"] = False
+        if "mtp" in analysis:
+            analysis["mtp"]["metadata_verified"] = False
         analysis["source_review_reason"] = "Source status, completeness or baseline comparison still needs review"
     if _fingerprint(source_path) != source_identity:
         raise MetadataError("Metadata source changed during architecture analysis; rerun against the latest report")
@@ -214,6 +260,7 @@ def _analyze_source(root, settings, source_path):
                     model_id=settings["model_id"], revision=settings["revision"],
                     source_coverage=coverage, catalogue=evidence, catalogue_path=str(path),
                     source_report=source_evidence,
+                    size_accounting=accounting,
                     source_eligibility_verified=source_eligible,
                     provenance_scope="Local model/revision, coverage, catalogue size/hash and accounting consistency only; no remote reauthentication")
     return analysis
@@ -239,9 +286,14 @@ def render_architecture(result):
 def run_architecture(root, settings=None):
     root = Path(root).resolve()
     source_path = root / "reports" / "metadata-latest.json"
+    report_dir = None
     try:
         if settings is None:
             settings = _bounded_json(root / "config" / "local.json", 65536)
+        if not isinstance(settings, dict):
+            raise MetadataError("Model settings must be a JSON object")
+        report_dir = reports_directory(root, settings)
+        source_path = report_dir / "metadata-latest.json"
         validate_target(settings["model_id"], settings["revision"])
         if not source_path.is_file():
             raise MetadataError("Run metadata-check first; the baseline snapshot has no tensor catalogue")
@@ -253,7 +305,8 @@ def run_architecture(root, settings=None):
     result.update(tool_version=__version__, metadata_only=True, payload_values_verified=False,
                   real_checkpoint_compatible=False, inference_verified=False, full_model_loaded=False,
                   full_model_limits_verified=False, checked_at=datetime.now(timezone.utc).isoformat())
-    report_dir = root / "reports"
+    if report_dir is None:
+        return result
     report_dir.mkdir(parents=True, exist_ok=True)
     write_json(report_dir / "architecture-latest.json", result)
     (report_dir / "architecture-latest.md").write_text(render_architecture(result), encoding="utf-8")

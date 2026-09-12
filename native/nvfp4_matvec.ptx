@@ -1,0 +1,116 @@
+// Bounded decoded-weight NVFP4 reference, unquantized FP32 input vector.
+// ModelOpt 51de53e48ccae8804f8fe1198b7cf89475c5c4f4 nibble/scale layout.
+// One output row per thread, <=128x128 logical elements, no native FP4 MMA.
+.version 7.0
+.target sm_80
+.address_size 64
+
+.visible .entry nvfp4_matvec_tile(
+    .param .u64 weights,
+    .param .u64 scales,
+    .param .u64 vector,
+    .param .u64 output,
+    .param .u32 rows,
+    .param .u32 cols,
+    .param .f32 global_scale
+)
+{
+    .reg .pred %p<6>;
+    .reg .b32 %r<32>;
+    .reg .b64 %rd<20>;
+    .reg .f32 %f<10>;
+
+    ld.param.u64 %rd0, [weights];
+    ld.param.u64 %rd1, [scales];
+    ld.param.u64 %rd2, [vector];
+    ld.param.u64 %rd3, [output];
+    ld.param.u32 %r0, [rows];
+    ld.param.u32 %r1, [cols];
+    ld.param.f32 %f0, [global_scale];
+    mov.u32 %r2, %ctaid.x;
+    mov.u32 %r3, %ntid.x;
+    mov.u32 %r4, %tid.x;
+    mad.lo.u32 %r5, %r2, %r3, %r4;
+    setp.ge.u32 %p0, %r5, %r0;
+    @%p0 bra DONE;
+
+    shr.u32 %r6, %r1, 1;
+    mul.wide.u32 %rd4, %r5, %r6;
+    add.u64 %rd5, %rd0, %rd4;
+    shr.u32 %r7, %r1, 4;
+    mul.wide.u32 %rd6, %r5, %r7;
+    add.u64 %rd7, %rd1, %rd6;
+    mov.u32 %r8, 0;
+    mov.f32 %f1, 0f00000000;
+
+LOOP:
+    shr.u32 %r9, %r8, 1;
+    cvt.u64.u32 %rd8, %r9;
+    add.u64 %rd9, %rd5, %rd8;
+    ld.global.u8 %r10, [%rd9];
+    and.b32 %r11, %r8, 1;
+    shl.b32 %r11, %r11, 2;
+    shr.u32 %r12, %r10, %r11;
+    and.b32 %r12, %r12, 15;
+    and.b32 %r13, %r12, 7;
+    and.b32 %r14, %r12, 8;
+    shl.b32 %r14, %r14, 28;
+    shr.u32 %r15, %r13, 1;
+    and.b32 %r16, %r13, 1;
+    setp.eq.u32 %p1, %r15, 0;
+    @%p1 bra FP4_SUBNORMAL;
+    add.u32 %r17, %r15, 126;
+    shl.b32 %r17, %r17, 23;
+    shl.b32 %r18, %r16, 22;
+    or.b32 %r17, %r17, %r18;
+    or.b32 %r17, %r17, %r14;
+    mov.b32 %f2, %r17;
+    bra FP4_DECODED;
+FP4_SUBNORMAL:
+    cvt.rn.f32.u32 %f2, %r16;
+    mul.rn.f32 %f2, %f2, 0f3f000000;
+    mov.b32 %r17, %f2;
+    or.b32 %r17, %r17, %r14;
+    mov.b32 %f2, %r17;
+FP4_DECODED:
+    shr.u32 %r19, %r8, 4;
+    cvt.u64.u32 %rd10, %r19;
+    add.u64 %rd11, %rd7, %rd10;
+    ld.global.u8 %r20, [%rd11];
+    // Host rejects negative and NaN scales; propagate a defensive NaN here.
+    setp.ge.u32 %p2, %r20, 127;
+    @%p2 bra BAD_SCALE;
+    shr.u32 %r21, %r20, 3;
+    and.b32 %r22, %r20, 7;
+    setp.eq.u32 %p3, %r21, 0;
+    @%p3 bra SCALE_SUBNORMAL;
+    add.u32 %r23, %r21, 120;
+    shl.b32 %r23, %r23, 23;
+    shl.b32 %r24, %r22, 20;
+    or.b32 %r23, %r23, %r24;
+    mov.b32 %f3, %r23;
+    bra SCALE_DECODED;
+SCALE_SUBNORMAL:
+    cvt.rn.f32.u32 %f3, %r22;
+    mul.rn.f32 %f3, %f3, 0f3b000000;
+    bra SCALE_DECODED;
+BAD_SCALE:
+    mov.f32 %f3, 0f7fc00000;
+SCALE_DECODED:
+    mul.wide.u32 %rd12, %r8, 4;
+    add.u64 %rd13, %rd2, %rd12;
+    ld.global.f32 %f4, [%rd13];
+    mul.rn.f32 %f5, %f3, %f0;
+    mul.rn.f32 %f6, %f2, %f5;
+    mul.rn.f32 %f7, %f6, %f4;
+    add.rn.f32 %f1, %f1, %f7;
+    add.u32 %r8, %r8, 1;
+    setp.lt.u32 %p4, %r8, %r1;
+    @%p4 bra LOOP;
+
+    mul.wide.u32 %rd14, %r5, 4;
+    add.u64 %rd15, %rd3, %rd14;
+    st.global.f32 [%rd15], %f1;
+DONE:
+    ret;
+}

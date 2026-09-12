@@ -116,6 +116,19 @@ class ArchitectureReportTests(unittest.TestCase):
         self.assertEqual(result["catalogue"]["records"], 6)
         self.assertEqual(result["layers"]["ids"], [0])
 
+    def test_complete_file_total_requires_independent_header_evidence(self):
+        data = full_checkpoint()
+        data["index"]["metadata"]["total_size"] = sum(size for _, size in data["headers"].values())
+        source, code = self.publish(data)
+        self.assertEqual(code, 0, source)
+        result = architecture.run_architecture(self.root, settings())
+        self.assertEqual(result["status"], "PASS", result)
+        self.assertTrue(result["size_accounting"]["captured_headers_reverified"])
+        header = next((self.directory / "evidence/headers").iterdir())
+        header.write_bytes(header.read_bytes() + b" ")
+        result = architecture.run_architecture(self.root, settings())
+        self.assertEqual(result["status"], "ERROR", result)
+
     def test_missing_source_never_falls_back_to_baseline_or_fake_inline_tensors(self):
         write_json(self.root / "docs/model-metadata.json", checkpoint()["expected"])
         self.check_error("metadata-check first")

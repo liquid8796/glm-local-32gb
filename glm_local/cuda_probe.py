@@ -22,6 +22,7 @@ from typing import Sequence
 
 MAX_TILE = 128
 MAX_OPERATIONS = 256
+MAX_EXECUTION_OPERATIONS = 65536
 MAX_EXPLICIT_DEVICE_BYTES = MAX_TILE * MAX_TILE + 2 * MAX_TILE * 4
 _PTX_PATH = Path(__file__).resolve().parent.parent / "native" / "fp8_matvec.ptx"
 
@@ -135,14 +136,18 @@ def _cleanup_errors(errors, primary):
 class CudaTileBackend:
     """Synchronous, single-threaded numerical probe with explicitly owned resources.
 
-    At most 256 launches per instance; each launch allocates at most 17,408
+    By default at most 256 launches per instance; an explicit execution budget
+    may permit up to 65536. Each launch allocates at most 17,408
     application buffer bytes, all freed before returning. Driver/context overhead
     is additional and is not included in that explicit allocation bound.
     """
 
-    def __init__(self, device_index=0):
+    def __init__(self, device_index=0, *, max_operations=MAX_OPERATIONS):
         if type(device_index) is not int or device_index < 0:
             raise ValueError("device_index must be a nonnegative integer")
+        if type(max_operations) is not int or not 1 <= max_operations <= MAX_EXECUTION_OPERATIONS:
+            raise ValueError(f"max_operations must be an integer in [1, {MAX_EXECUTION_OPERATIONS}]")
+        self.max_operations = max_operations
         self._thread_id = threading.get_ident()
         self._driver = _bind(_load_driver())
         self._context = C.c_void_p()
@@ -238,8 +243,9 @@ class CudaTileBackend:
         if self.closed:
             raise CudaProbeError("CUDA probe is closed")
         values, block_scale = validate_tile(weights, rows, cols, vector, scale)
-        if self.operations >= MAX_OPERATIONS:
-            raise CudaProbeError(f"Probe operation limit reached ({MAX_OPERATIONS})")
+        maximum = getattr(self, "max_operations", MAX_OPERATIONS)
+        if self.operations >= maximum:
+            raise CudaProbeError(f"Probe operation limit reached ({maximum})")
         host_weights = (C.c_ubyte * len(weights)).from_buffer_copy(weights)
         host_vector = (C.c_float * cols)(*values)
         host_output = (C.c_float * rows)()

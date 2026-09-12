@@ -1,6 +1,26 @@
 # Current Memory Snapshot — GLM Local 32GB
 
-Current release: v0.8.1. This is a project handoff document; historical verification artifacts retain their original release and dependency versions.
+Current release: v0.10.0. Historical verification artifacts retain their original release and dependency versions.
+
+Active default profile is nvfp4: dealignai/GLM-5.3-ABLITERATED-NVFP4 pinned371bdb985d0124e76348c91e4a8fcf3a9d719d09. User set the former FP8 model aside; it remains selectable with --profile fp8. Code and small-check scope persists; no full464.82GB download.
+
+NVFP4 snapshot is docs/models/abliterated-nvfp4/model-metadata.json; reports are under reports/nvfp4. All282 headers/232,385 tensors/57,600 NVFP4 quadruples verified, architecture has zero findings. Metadata HTTP timed out after279headers; new --resume reverified cache and fetched only3missingheaders. Original evidence is unchanged.
+
+Implemented packedE2M1 low-even/high-odd reader, row-group16E4M3 scales, F32global/input calibration scalars, nativeCPUandCUDAFP32fallback, descriptors and runtime dispatch. Input calibration is verified but not multiplied into weights; activation_quantization=none and nativeW4A4parity=false. Attention/shared/dense/MTP stayBF16. Same config-derived decoder and resource planner; MTP speculative execution remains excluded. Both model tokenizer artifacts have identical verified hashes and were reused without network.
+
+See [NVFP4.md](NVFP4.md) for current commands and [CHECKPOINTS.md](CHECKPOINTS.md) for historical FP8 acceptance boundaries.
+
+## Historical v0.9.0 handoff
+
+The model/revision remain dealignai/GLM-5.3-CYBERSECURITY-FP8 at 5915c1b88f998a9c1e1a0c83688e285a08ae3ca5. User selected code completion and small checks only; this does not authorize a 756 GB download.
+
+All 282 headers and 118,629 tensors pass metadata/architecture checks. Exact header accounting proves that this index.total_size includes complete shard files. Reviewed config defaults apply only to the pinned identity; 78 backbone layers and one MTP inventory are supported.
+
+Implemented: selected FP8 descriptors/readers/execution; RAM/VRAM planner and leases; complete-catalogue BF16/F16/F32/FP8 streaming reader with two open shards; config-derived compressed MLA/DSA/grouped-MoE decoder; pinned native tokenizer verification; Windows-job CLI and report workflow. Real q_a2048x6144 CPU384/GPU384 tiles matched independent FP32 reference with zero error. Native small full-stack decoder cases match pinned Transformers. These checks do not verify full-model BF16 fidelity, physical RAM or GPU utilization.
+
+Runtime uses FP32 caches/linear and scalar reductions, portable tie rules, default RoPE and sequential disk streaming. MTP speculative execution is excluded. Full checkpoint shards remain absent and doctor stays BLOCKED. See [CHECKPOINTS.md](CHECKPOINTS.md) and [RUNTIME.md](RUNTIME.md).
+
+## Historical v0.8.1 handoff
 
 The synthetic decoder has CPU/GPU, official Transformers parity and bounded sharded safetensors validation. Those results do not establish full-checkpoint inference or resource limits.
 

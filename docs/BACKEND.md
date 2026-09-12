@@ -1,4 +1,16 @@
-# Phần suy luận còn thiếu
+# Backend và điều kiện nghiệm thu — 0.10.0
+
+Profile mặc định hiện là NVFP4. Đã thêm nativeCPU/CUDA cho trọng số expert E2M1 đóng gói, scale theo nhóm16, descriptor bốn tensor, reader và dispatch theo logical shape. Giữ FP8 qua `--profile fp8`. Các báo cáo NVFP4 tách riêng và không mở khóa doctor: full-checkpoint inference/tài nguyên chưa được nghiệm thu. Đường hiện tại tính FP32 sau giải mã weight, không lượng tử activation W4A4/cacheFP8. [Hướng dẫn hiện tại](NVFP4.md).
+
+## Mốc backend FP8 — v0.9.0
+
+Đã triển khai runtime backbone thử nghiệm cho đúng checkpoint CYBERSECURITY đã ghim: full-catalogue BF16/FP8 reader, descriptor/projection CPU/GPU, cache MLA nén, DSA/MoE theo config, RAM/VRAM planner, tokenizer và lệnh generate. [Hướng dẫn](RUNTIME.md) · [Các checkpoint và bằng chứng](CHECKPOINTS.md).
+
+Metadata/architecture thật đã PASS đủ282 header/118.629 tensor. Một projection thật2048×6144 CPU/GPU có sai số0 so với tham chiếu độc lập. Decoder nhỏ qua file safetensors và kernel native khớp graph Transformers chính thức. Tokenizer đúng hash và roundtrip tiếng Việt/Anh.
+
+Nghiệm thu full model còn chờ dữ liệu đầy đủ theo lựa chọn người dùng: payload/output parity với BF16 chính thức; residentRAM trong prefill/decode nhiều context; CPU/GPU dưới tải dài và tốc độI/O. Code chỉ thực hiện backbone với profile RoPE mặc định/FP32, không MTP speculative decoding; các giới hạn tại RUNTIME.md. Planner là ước tính, Job Object giới hạn commit và GPU pacing là heuristic. doctor giữ BLOCKED.
+
+## Khoảng cách lịch sử ở bản 0.8.1
 
 Đây là ghi nhận khoảng cách kỹ thuật và điều kiện nghiệm thu cho GLM ở bản 0.8.1. Baseline 0.6.1 đã đạt official miniature hybrid safetensors trên Windows qua report người dùng. Bản 0.7.0 thêm audit metadata checkpoint có giới hạn và offline replay; lần truy cập lịch sử từ môi trường phát triển bị lỗi DNS. Bản 0.8.1 sửa luồng JSONL và điều kiện xác minh cấu trúc của metadata/architecture mapper. Mục tiêu suy luận checkpoint đầy đủ **chưa hoàn tất**.
 

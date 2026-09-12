@@ -1,4 +1,26 @@
-# Checkpoint metadata audit — 0.8.1
+# Checkpoint metadata audit — 0.10.0
+
+## NVFP4 và nhiều profile ở bản 0.10.0
+
+`--profile nvfp4` chọn snapshot riêng tại `docs/models/abliterated-nvfp4/model-metadata.json` và báo cáo `reports/nvfp4/`. Model mặc định hiện là NVFP4; dùng `--profile fp8` để truy cập model cũ. Model/revision, catalogue và thư mục run phải cùng profile; không dùng chéo latest report.
+
+NVFP4 đã kiểm tra đủ282 header/232.385 tensor. `index.total_size` của checkpoint này là tổng payload, khớp chính xác; khác với quy ước file của model FP8 cũ. U8weight được kiểm tra theo shape đóng gói, logical shape ghi riêng. Mỗi expert projection NVFP4 có `weight_scale` E4M3, `weight_scale_2` F32 scalar và `input_scale` F32 scalar. Scale E4M3 không bị nhận nhầm thành weight FP8.
+
+Có thể tiếp tục lần đọc bị ngắt mà không lấy lại header đã lưu:
+
+```powershell
+.\glm.bat --profile nvfp4 metadata-check --resume "reports\nvfp4\metadata\<run-id>\evidence" --budget-mib 96
+```
+
+`--resume` và `--offline` loại trừ nhau. Resume xác minh lại snapshot, ba JSON và toàn bộ header cache trước HTTP, rồi chỉ lấy header còn thiếu tại revision cố định. Cache và mạng dùng chung read budget; report tách số byte/header của hai nguồn. Evidence cũ giữ nguyên, run mới chứa snapshot hoàn chỉnh. Nguồn cache không được gọi là vừa xác thực lại từ xa. Lần NVFP4 thực tế đã tái dùng279 header và lấy tiếp3 header sau timeout.
+
+## Kiểm chứng mới ở bản 0.9.0
+
+Đã lấy đủ 282 header của revision đã ghim bằng HTTPS Range và replay thành công. Có 118.629 tensor; metadata và architecture PASS. Index thật dùng `total_size` bằng tổng kích thước file shard. Bản này chỉ chấp nhận quy ước đó sau khi chứng minh **payload + toàn bộ prefix/header nhận được = tổng kích thước manifest = index.total_size**. Sai lệch không thuộc hai quy ước chính xác vẫn ERROR. Architecture tự đọc lại bằng chứng header, không tin riêng cờ trong report.
+
+`tensor_payload_accounting.index_size_convention` là `tensor_payload`, `complete_shard_files` hoặc `unresolved`; `exact_match` vẫn biểu thị payload bằng total_size, nên có thể false khi quy ước file đã được chứng minh. Field cũ `declared_tensor_payload_bytes` lưu nguyên `index.total_size` để tương thích. Điều kiện này thay thế phép so payload duy nhất ở mô tả v0.8.1 phía dưới; bằng chứng v0.7.0 giữ nguyên lịch sử.
+
+Reader index cũ giữ nguyên giới hạn. Runtime mới có reader riêng lấy catalogue đã xác minh, tối đa 2 shard mở, đọc payload tối đa 64 KiB/lần. Xem [RUNTIME.md](RUNTIME.md).
 
 ## Mục tiêu và mốc hiện tại
 

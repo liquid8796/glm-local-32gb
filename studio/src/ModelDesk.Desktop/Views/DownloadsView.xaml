@@ -1,0 +1,73 @@
+<UserControl x:Class="ModelDesk.Desktop.Views.DownloadsView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid Margin="0,0,0,10">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <StackPanel>
+      <TextBlock Text="Hàng đợi tải xuống" Style="{StaticResource PageTitle}" />
+      <TextBlock Text="Tiến độ thực tế, tiếp tục tệp dở và giới hạn tốc độ theo cấu hình của bạn." Style="{StaticResource Muted}" Margin="0,0,0,22" />
+    </StackPanel>
+    <Border Grid.Row="1" Style="{StaticResource Panel}" Padding="18" Margin="0,0,0,17">
+      <DockPanel>
+        <TextBlock Text="{Binding Speed}" FontFamily="Cascadia Code, Consolas" FontSize="23" Foreground="{DynamicResource AccentBrush}" DockPanel.Dock="Right" VerticalAlignment="Center" />
+        <StackPanel>
+          <TextBlock Text="{Binding Summary}" FontWeight="SemiBold" />
+          <WrapPanel Margin="0,12,0,0">
+            <Button Content="Tiếp tục hàng đợi" Command="{Binding ResumeAllCommand}" Style="{StaticResource CompactButton}" Margin="0,0,8,0" />
+            <Button Content="Tạm dừng tất cả" Command="{Binding PauseAllCommand}" Style="{StaticResource CompactButton}" Margin="0,0,8,0" />
+            <Button Content="Hủy tất cả" Command="{Binding CancelAllCommand}" Style="{StaticResource CompactButton}" />
+          </WrapPanel>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+    <StackPanel Grid.Row="2">
+      <TextBlock Text="{Binding Error}" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8" />
+      <TextBlock Text="{Binding EmptyText}" Style="{StaticResource Muted}" Margin="0,0,0,8" />
+    </StackPanel>
+    <DataGrid Grid.Row="3" ItemsSource="{Binding Items}" IsReadOnly="True" RowHeight="78" MinHeight="140">
+      <DataGrid.Columns>
+        <DataGridTemplateColumn Header="Tệp / model" Width="*" MinWidth="190">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <StackPanel>
+                <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding FileName}" />
+                <TextBlock Text="{Binding ModelId}" Foreground="{DynamicResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" Margin="0,4,0,0" />
+                <TextBlock Text="{Binding Error}" FontSize="10" Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding Error}" />
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <DataGridTextColumn Header="Trạng thái" Binding="{Binding StateLabel}" Width="105" />
+        <DataGridTemplateColumn Header="Tiến độ" Width="180">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <StackPanel>
+                <TextBlock Text="{Binding SizeLabel}" FontFamily="Cascadia Code, Consolas" FontSize="10" Margin="0,0,0,8" />
+                <ProgressBar Value="{Binding Progress, Mode=OneWay}" />
+                <TextBlock Text="{Binding SpeedLabel}" Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,5,0,0" />
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <DataGridTextColumn Header="Còn lại" Binding="{Binding Eta}" Width="90" />
+        <DataGridTemplateColumn Header="Thao tác" Width="245">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <WrapPanel>
+                <Button Content="Dừng" Command="{Binding DataContext.PauseCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource CompactButton}" Margin="0,0,5,4" />
+                <Button Content="Tiếp" Command="{Binding DataContext.ResumeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource CompactButton}" Margin="0,0,5,4" />
+                <Button Content="Hủy" Command="{Binding DataContext.CancelCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource CompactButton}" Margin="0,0,5,4" />
+                <Button Content="Mở" Command="{Binding DataContext.OpenFolderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource CompactButton}" Margin="0,0,0,4" />
+              </WrapPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+      </DataGrid.Columns>
+    </DataGrid>
+    <TextBlock Grid.Row="4" Text="Tệp tải dở được giữ lại khi dừng hoặc hủy. Khi mở lại ứng dụng, tác vụ chưa xong ở trạng thái tạm dừng để bạn quyết định tiếp tục." Style="{StaticResource Muted}" FontSize="12" Margin="0,14,0,0" />
+  </Grid>
+</UserControl>

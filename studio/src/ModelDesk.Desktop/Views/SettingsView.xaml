@@ -1,0 +1,108 @@
+<UserControl x:Class="ModelDesk.Desktop.Views.SettingsView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="0,0,12,12">
+      <DockPanel>
+        <Button Content="Lưu cấu hình" Command="{Binding SaveCommand}" Style="{StaticResource Primary}" DockPanel.Dock="Right" VerticalAlignment="Top" />
+        <StackPanel>
+          <TextBlock Text="Cấu hình workspace" Style="{StaticResource PageTitle}" />
+          <TextBlock Text="Đường dẫn, tải xuống, tài nguyên và giao diện trên máy này." Style="{StaticResource Muted}" />
+        </StackPanel>
+      </DockPanel>
+      <TextBlock Text="{Binding Message}" Foreground="{DynamicResource AccentBrush}" Margin="0,13,0,13" />
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="1.4*" />
+          <ColumnDefinition Width="24" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <StackPanel>
+          <Border Style="{StaticResource Panel}">
+            <StackPanel>
+              <TextBlock Text="Python core và thư mục" Style="{StaticResource SectionTitle}" />
+              <WrapPanel Margin="0,0,0,13">
+                <Button Content="Tự tìm đường dẫn" Command="{Binding DiscoverCommand}" Style="{StaticResource CompactButton}" Margin="0,0,8,5" />
+                <Button Content="Lưu và nạp lại profile" Command="{Binding SaveCommand}" Style="{StaticResource CompactButton}" Margin="0,0,0,5" />
+              </WrapPanel>
+              <TextBlock Text="Thư mục dự án Python core" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
+              <DockPanel>
+                <Button Content="Chọn…" Command="{Binding BrowseRootCommand}" DockPanel.Dock="Right" Margin="9,0,0,0" />
+                <TextBox Text="{Binding ProjectRoot}" AutomationProperties.Name="Thư mục Python core" />
+              </DockPanel>
+              <TextBlock Text="Python executable" Style="{StaticResource FieldLabel}" />
+              <DockPanel>
+                <Button Content="Chọn…" Command="{Binding BrowsePythonCommand}" DockPanel.Dock="Right" Margin="9,0,0,0" />
+                <TextBox Text="{Binding PythonExecutable}" />
+              </DockPanel>
+              <TextBlock Text="Thư mục tải mặc định" Style="{StaticResource FieldLabel}" />
+              <DockPanel>
+                <Button Content="Chọn…" Command="{Binding BrowseDownloadsCommand}" DockPanel.Dock="Right" Margin="9,0,0,0" />
+                <TextBox Text="{Binding DownloadDirectory}" />
+              </DockPanel>
+              <TextBlock Text="Thư mục trọng số chạy model (tùy chọn)" Style="{StaticResource FieldLabel}" />
+              <DockPanel>
+                <Button Content="Chọn…" Command="{Binding BrowseRuntimeCommand}" DockPanel.Dock="Right" Margin="9,0,0,0" />
+                <TextBox Text="{Binding RuntimeDirectory}" />
+              </DockPanel>
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource Panel}" Margin="0,20,0,0">
+            <StackPanel>
+              <TextBlock Text="Hugging Face access token" Style="{StaticResource SectionTitle}" />
+              <TextBlock Text="{Binding TokenStatus}" Style="{StaticResource Muted}" FontSize="12" />
+              <PasswordBox x:Name="TokenInput" Margin="0,13,0,12" AutomationProperties.Name="Hugging Face access token" />
+              <WrapPanel>
+                <Button Content="Lưu token" Click="SaveToken" Margin="0,0,9,0" />
+                <Button Content="Xóa token" Command="{Binding ClearTokenCommand}" />
+              </WrapPanel>
+              <TextBlock Text="Token được mã hóa bằng Windows DPAPI, gắn với tài khoản hiện tại. Giá trị không xuất hiện trong cấu hình hoặc nhật ký." Style="{StaticResource Muted}" FontSize="12" Margin="0,13,0,0" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+        <StackPanel Grid.Column="2">
+          <Border Style="{StaticResource Panel}">
+            <StackPanel>
+              <TextBlock Text="Tải xuống và giao diện" Style="{StaticResource SectionTitle}" />
+              <TextBlock Text="Giới hạn tổng (MiB/s) · 0 là không giới hạn" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
+              <TextBox Text="{Binding Speed}" />
+              <TextBlock Text="Số tệp tải đồng thời · 1–8" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding Concurrent}" />
+              <TextBlock Text="Kết nối trên mỗi tệp · 1–4" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding ConnectionsPerFile}" />
+              <TextBlock Text="Tệp lớn từ 64 MiB tự chia đoạn. Toàn bộ hàng đợi dùng tối đa 8 kết nối; giới hạn tốc độ áp dụng cho tổng lưu lượng. Chọn 1 kết nối/tệp để tải tuần tự." Style="{StaticResource Muted}" FontSize="12" Margin="0,11,0,0" />
+              <TextBlock Text="Giao diện" Style="{StaticResource FieldLabel}" />
+              <ComboBox ItemsSource="{Binding Themes}" SelectedItem="{Binding Theme}" />
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource Panel}" Margin="0,20,0,0">
+            <StackPanel>
+              <TextBlock Text="Giới hạn tài nguyên Python" Style="{StaticResource SectionTitle}" />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="14" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="RAM (GB) · tối đa 32" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
+                  <TextBox Text="{Binding Ram}" />
+                  <TextBlock Text="GPU index" Style="{StaticResource FieldLabel}" />
+                  <TextBox Text="{Binding GpuIndex}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                  <TextBlock Text="CPU (%) · tối đa 70" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
+                  <TextBox Text="{Binding Cpu}" />
+                  <TextBlock Text="GPU (%) · tối đa 60" Style="{StaticResource FieldLabel}" />
+                  <TextBox Text="{Binding GpuTarget}" />
+                </StackPanel>
+              </Grid>
+              <TextBlock Text="Cửa sổ điều tiết GPU (giây)" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding GpuWindow}" />
+              <TextBlock Text="Cấu hình tài nguyên được gửi cho tác vụ Python mới. Xem kiểm tra giới hạn Windows để xác minh chính sách đã cài." Style="{StaticResource Muted}" FontSize="12" Margin="0,13,0,0" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Grid>
+      <TextBlock Text="{Binding SettingsPath}" Style="{StaticResource Mono}" Foreground="{DynamicResource MutedBrush}" Margin="0,20,0,0" />
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

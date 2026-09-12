@@ -1,6 +1,7 @@
 """Bounded public JSON metadata access; never fetch weights or execute remote code."""
 
 import json
+from copy import deepcopy
 import re
 import urllib.parse
 import urllib.request
@@ -69,6 +70,8 @@ def summarize_metadata(model_id, revision, metadata, config):
     architecture["quantization"] = {
         key: quant.get(key) for key in ("quant_method", "fmt", "weight_block_size")
     }
+    if quant.get("quant_method") == "modelopt":
+        architecture["quantization"] = deepcopy(quant)
     return {
         "model_id": model_id,
         "revision": revision,

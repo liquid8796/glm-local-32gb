@@ -1,0 +1,80 @@
+<UserControl x:Class="ModelDesk.Desktop.Views.ValidationView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="0,0,12,12">
+      <TextBlock Text="Kiểm chứng và công cụ" Style="{StaticResource PageTitle}" />
+      <TextBlock Text="Toàn bộ phép kiểm tra của Python core, cùng build native và môi trường tham chiếu." Style="{StaticResource Muted}" Margin="0,0,0,24" />
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="24" />
+          <ColumnDefinition Width="1.35*" />
+        </Grid.ColumnDefinitions>
+        <Border Style="{StaticResource Panel}" VerticalAlignment="Top">
+          <StackPanel>
+            <TextBlock Text="Tác vụ" Style="{StaticResource SectionTitle}" />
+            <ComboBox ItemsSource="{Binding Operations}" SelectedItem="{Binding Operation}" DisplayMemberPath="Name" AutomationProperties.Name="Chọn tác vụ kiểm chứng" />
+            <TextBlock Text="{Binding Description}" Style="{StaticResource Muted}" Margin="0,17,0,22" />
+            <TextBlock Text="Profile đang chọn trên thanh đầu trang quyết định checkpoint, metadata và thư mục báo cáo." Style="{StaticResource Muted}" FontSize="12" />
+            <Button Content="Thực hiện tác vụ" Command="{Binding ExecuteCommand}" Style="{StaticResource Primary}" Margin="0,25,0,0" />
+          </StackPanel>
+        </Border>
+        <Border Grid.Column="2" Style="{StaticResource Panel}">
+          <StackPanel>
+            <TextBlock Text="Tham số" Style="{StaticResource SectionTitle}" />
+            <StackPanel Visibility="{Binding IsMetadata, Converter={StaticResource BoolVisibility}}">
+              <TextBlock Text="Nguồn metadata" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
+              <ComboBox ItemsSource="{Binding EvidenceModes}" SelectedItem="{Binding EvidenceMode}" />
+              <TextBlock Text="Thư mục evidence (offline / resume)" Style="{StaticResource FieldLabel}" />
+              <DockPanel>
+                <Button Content="Chọn…" Command="{Binding BrowseEvidenceCommand}" DockPanel.Dock="Right" Margin="10,0,0,0" />
+                <TextBox Text="{Binding EvidencePath}" />
+              </DockPanel>
+              <TextBlock Text="Số shard tối đa · 1–512" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding MaxShards}" />
+              <TextBlock Text="Ngân sách đọc metadata (MiB) · 1–128" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding Budget}" />
+            </StackPanel>
+            <StackPanel Visibility="{Binding IsBackend, Converter={StaticResource BoolVisibility}}">
+              <TextBlock Text="Backend" Style="{StaticResource FieldLabel}" />
+              <ComboBox ItemsSource="{Binding Backends}" SelectedItem="{Binding Backend}" />
+            </StackPanel>
+            <StackPanel Visibility="{Binding IsProjection, Converter={StaticResource BoolVisibility}}">
+              <TextBlock Text="Tensor · để trống để dùng mặc định của profile" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding Tensor}" FontFamily="Cascadia Code, Consolas" />
+              <TextBlock Text="Ngân sách projection (MiB) · 1–128" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding Budget}" />
+            </StackPanel>
+            <StackPanel Visibility="{Binding IsProjection, Converter={StaticResource BoolVisibility}}">
+              <CheckBox Content="Cho phép tải các lát trọng số cần kiểm chứng" IsChecked="{Binding Online}" />
+              <DockPanel>
+                <Button Content="Chọn model…" Command="{Binding BrowseModelCommand}" DockPanel.Dock="Right" Margin="10,0,0,0" />
+                <TextBox Text="{Binding ModelDirectory}" />
+              </DockPanel>
+            </StackPanel>
+            <StackPanel Visibility="{Binding IsTokenizer, Converter={StaticResource BoolVisibility}}">
+              <CheckBox Content="Cho phép tải tokenizer JSON" IsChecked="{Binding Online}" />
+              <TextBlock Text="Thư mục model" Style="{StaticResource FieldLabel}" />
+              <DockPanel>
+                <Button Content="Chọn…" Command="{Binding BrowseModelCommand}" DockPanel.Dock="Right" Margin="10,0,0,0" />
+                <TextBox Text="{Binding ModelDirectory}" />
+              </DockPanel>
+            </StackPanel>
+            <StackPanel Visibility="{Binding IsSynthetic, Converter={StaticResource BoolVisibility}}">
+              <TextBlock Text="Seed" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding Seed}" />
+              <TextBlock Text="Độ dài prompt (mini / parity)" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding Lengths}" />
+            </StackPanel>
+            <StackPanel Visibility="{Binding IsMonitor, Converter={StaticResource BoolVisibility}}">
+              <TextBlock Text="Thời lượng quan sát (giây) · 1–60" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding Seconds}" />
+            </StackPanel>
+            <TextBlock Text="Đối số nâng cao" Style="{StaticResource FieldLabel}" />
+            <TextBox Text="{Binding Advanced}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="75" FontFamily="Cascadia Code, Consolas" />
+            <TextBlock Text="Ví dụ: --refresh cho kiểm tra sẵn sàng; --storage safetensors cho mini/parity. Các đối số đi trực tiếp vào tác vụ, không chạy qua shell." Style="{StaticResource Muted}" FontSize="12" Margin="0,10,0,0" />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

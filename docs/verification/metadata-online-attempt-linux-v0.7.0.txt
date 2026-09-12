@@ -1,3 +1,0 @@
-Inspecting pinned checkpoint metadata only; no tokenizer, tensor payload, Torch or CUDA.
-Metadata status: ERROR; full-model runtime remains unverified.
-Report: /mnt/data/work-v062/glm-local-32gb/reports/metadata/20260912T035657Z-9170cd41/result.md

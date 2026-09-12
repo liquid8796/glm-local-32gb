@@ -82,17 +82,17 @@ def evaluate(settings, snapshot, hardware, project_root):
     free = disk_free_for(model_dir)
     needed = local["additional_bytes_required"] + settings["disk_reserve_bytes"]
     blockers = [
-        {"code": "GLM_BACKEND_NOT_IMPLEMENTED", "message":
-         "The pinned Kimi engine is CPU-only and cannot execute glm_moe_dsa FP8. "
-         "A fixed synthetic decoder and FP8 CPU/CUDA kernels are available. "
-         "The miniature also has an official FP32 comparison command. Production GLM checkpoint mapping, "
-         "full dtype fidelity, tokenizer and full-model integration remain unverified."},
+        {"code": "FULL_MODEL_PARITY_UNVERIFIED", "message":
+         "A config-derived experimental GLM backbone, BF16/FP8/NVFP4 streaming reader, native tokenizer "
+         "verification and CPU/CUDA projection path are implemented. Complete checkpoint output "
+         "has not been compared with the official model. Small-fixture parity does not establish "
+         "full BF16 fidelity, tie behavior or full-model compatibility."},
         {"code": "RAM_RESIDENT_CAP_UNVERIFIED", "message":
          "Windows Job Object caps committed memory, not total resident memory or OS file cache. "
          "A 32 GB physical RAM ceiling has not been established."},
-        {"code": "GPU_PACING_NOT_INTEGRATED", "message":
-         "Cooperative pacing gates synthetic FP8 and miniature decoder work. Real GLM inference is unavailable, "
-         "so the 60% average target under full-model load remains unverified."},
+        {"code": "GPU_PACING_UNVERIFIED", "message":
+         "Cooperative pacing gates experimental streamed GPU projections. The 60% average target "
+         "under complete model prefill/decode remains unverified."},
     ]
     if local["missing_shards"] or local["wrong_size_shards"]:
         blockers.append({"code": "CHECKPOINT_INCOMPLETE", "message":
@@ -115,7 +115,11 @@ def evaluate(settings, snapshot, hardware, project_root):
         "GPU target is time-average compute utilization, distinct from VRAM or power limits.",
         "Disk streaming may reduce resident weights; speed requires actual storage and inference measurements.",
     ]
-    if gpu and gpu.get("compute_capability") not in (None, "N/A", "[N/A]"):
+    nvfp4 = snapshot.get("architecture", {}).get("quantization", {}).get("quant_algo") == "NVFP4"
+    if nvfp4:
+        notes.append("NVFP4 weights use a decoded-weight FP32 CPU/CUDA fallback. Native FP4 tensor-core "
+                     "instructions, W4A4 activation rounding and quantized KV cache are not used.")
+    elif gpu and gpu.get("compute_capability") not in (None, "N/A", "[N/A]"):
         try:
             if float(gpu["compute_capability"]) < 8.9:
                 notes.append("GPU compute capability is below 8.9: original FP8 storage requires "

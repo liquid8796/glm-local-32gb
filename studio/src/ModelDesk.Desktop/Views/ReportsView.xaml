@@ -1,0 +1,57 @@
+<UserControl x:Class="ModelDesk.Desktop.Views.ReportsView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid Margin="0,0,0,10">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+    <StackPanel>
+      <TextBlock Text="Báo cáo và bằng chứng" Style="{StaticResource PageTitle}" />
+      <TextBlock Text="{Binding Summary}" Style="{StaticResource Muted}" Margin="0,0,0,21" />
+    </StackPanel>
+    <DockPanel Grid.Row="1" Margin="0,0,0,17">
+      <Button Content="Làm mới" Command="{Binding RefreshCommand}" DockPanel.Dock="Right" Margin="9,0,0,0" />
+      <Button Content="Mở thư mục" Command="{Binding OpenFolderCommand}" DockPanel.Dock="Right" Margin="9,0,0,0" />
+      <TextBox Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Lọc báo cáo theo tên" />
+    </DockPanel>
+    <Grid Grid.Row="2">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="330" />
+        <ColumnDefinition Width="20" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <DataGrid ItemsSource="{Binding View}" SelectedItem="{Binding Selected}" IsReadOnly="True" RowHeight="65">
+          <DataGrid.Columns>
+            <DataGridTemplateColumn Header="Báo cáo" Width="*">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <StackPanel>
+                    <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" />
+                    <TextBlock Text="{Binding ModifiedAt, StringFormat={}{0:dd/MM/yyyy HH:mm}}" Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,5,0,0" />
+                  </StackPanel>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+            <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status}" Width="90" />
+          </DataGrid.Columns>
+        </DataGrid>
+        <Button Grid.Row="1" Content="Đọc báo cáo" Command="{Binding ReadCommand}" Margin="0,13,0,0" />
+      </Grid>
+      <Grid Grid.Column="2">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="{Binding Selected.Name}" Style="{StaticResource SectionTitle}" />
+        <TextBlock Grid.Row="1" Text="{Binding Error}" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,7" />
+        <TextBox Grid.Row="2" Text="{Binding Content, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" FontFamily="Cascadia Code, Consolas" FontSize="12" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Nội dung báo cáo" />
+      </Grid>
+    </Grid>
+  </Grid>
+</UserControl>

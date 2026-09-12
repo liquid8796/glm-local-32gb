@@ -122,8 +122,8 @@ class ReadinessGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "BLOCKED")
         self.assertIs(result["inference_verified"], False)
         codes = {item["code"] for item in result["blockers"]}
-        self.assertTrue({"GLM_BACKEND_NOT_IMPLEMENTED", "RAM_RESIDENT_CAP_UNVERIFIED",
-                         "GPU_PACING_NOT_INTEGRATED", "CHECKPOINT_CONTENT_UNVERIFIED"} <= codes)
+        self.assertTrue({"FULL_MODEL_PARITY_UNVERIFIED", "RAM_RESIDENT_CAP_UNVERIFIED",
+                         "GPU_PACING_UNVERIFIED", "CHECKPOINT_CONTENT_UNVERIFIED"} <= codes)
         self.assertNotIn("CHECKPOINT_INCOMPLETE", codes)
 
     def test_missing_shards_and_exact_disk_boundary_are_reported(self):

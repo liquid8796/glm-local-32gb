@@ -1,6 +1,51 @@
-# GLM Local 32GB — decoder và đọc trọng số theo khối
+# ModelDesk — GUI C# và Python core GLM
 
-**Trạng thái 0.8.1: sửa luồng catalogue metadata → architecture, kiểm tra đúng nguồn/config/shape/tensor bắt buộc và điều kiện báo PASS. Chưa chạy checkpoint đầy đủ.**
+Mở `ModelDesk.sln` bằng Visual Studio 2026 hoặc chạy `build-studio.bat -Test`. GUI WPF/.NET 10 có bảy tab quản lý model, kiểm chứng, Hugging Face, tải xuống, báo cáo và cài đặt; CLI dùng chung dịch vụ với GUI. Python/native core vẫn giữ nguyên. [Hướng dẫn ModelDesk](studio/README.md) · [Kiến trúc source](studio/ARCHITECTURE.md).
+
+```powershell
+.\modeldesk.bat
+.\modeldesk-cli.bat help
+.\clean-project.bat          # xem trước cache có thể dọn
+.\clean-project.bat -Apply   # chỉ xóa file cache; giữ model, venv, DLL và evidence
+```
+
+Trình tải hỗ trợ chia đoạn cho file lớn, tối đa bốn kết nối mỗi file/tám kết nối tổng, resume có checkpoint và xác minh hash. [Benchmark có điều kiện kiểm soát](docs/verification/modeldesk-download-benchmark.md); không phải cam kết tốc độ Internet. Quy trình kiểm tra, commit và tự push `origin/master` được ghi trong `AGENTS.md`.
+
+## Python core — đọc trọng số FP8/NVFP4 theo khối
+
+**Trạng thái 0.10.0: đã thêm profile NVFP4 và đặt làm mặc định; profile FP8 cũ được giữ riêng.**
+
+Model đang làm việc: `dealignai/GLM-5.3-ABLITERATED-NVFP4`, revision `371bdb985d0124e76348c91e4a8fcf3a9d719d09`. Đã xác minh đủ **282 header, 232.385 tensor, 57.600 bộ weight/scale NVFP4**; metadata và architecture PASS. Reader xử lý expert U8 đóng gói E2M1, scale E4M3 theo nhóm16 và scale toàn tensor F32; attention/shared/dense/MTP giữ BF16.
+
+Kiểm chứng bản 0.10.0 trên Windows: **728/728 test đạt, không bỏ qua**. Projection expert thật logical 2048×6144 chạy CPU/GPU có sai số 0 so với tham chiếu FP32 độc lập; chỉ tải 7,08MB tensor và scale. [Bằng chứng NVFP4](docs/verification/nvfp4-v0.10.0.json).
+
+Runtime giải mã trọng số NVFP4 rồi tính FP32 trên CPU/CUDA, phù hợp đường fallback của RTX3070. Không mô phỏng activation W4A4 hoặc cache FP8 của runtime NVIDIA. Kết quả inference toàn checkpoint vẫn chưa nghiệm thu.
+
+```powershell
+.\build-native.bat
+.\glm.bat --profile nvfp4 runtime-plan --backend hybrid --context 4096
+.\glm.bat --profile nvfp4 projection-check --online --backend hybrid --budget-mib 16
+.\glm.bat --profile nvfp4 tokenizer-check
+.\glm.bat --profile fp8 doctor
+```
+
+Cần build lại một lần để có `nvfp4_cpu.dll`; PTX được driver nạp trực tiếp. [Hướng dẫn NVFP4 và chuyển profile](docs/NVFP4.md). Báo cáo NVFP4 nằm trong `reports/nvfp4/`; dữ liệu và báo cáo FP8 cũ vẫn giữ nguyên. Lượt này chỉ tải metadata và một projection nhỏ, không tải toàn bộ checkpoint ~464,82GB.
+
+## Mốc FP8 trước đây — v0.9.0
+
+**Trạng thái 0.9.0: đã triển khai decoder theo config, reader BF16/FP8 cho catalogue đầy đủ, planner CPU/GPU, tokenizer và kiểm chứng projection thật. Chưa nghiệm thu suy luận full checkpoint.**
+
+Giữ đúng `dealignai/GLM-5.3-CYBERSECURITY-FP8`, revision `5915c1b88f998a9c1e1a0c83688e285a08ae3ca5`. Đã kiểm tra **282/282 header, 118.629 tensor, 78 layer backbone + 1 layer MTP**, metadata và architecture PASS. Projection thật `model.layers.0.self_attn.q_a_proj.weight` (2048×6144) chạy CPU/GPU với 384 khối mỗi bên và khớp tham chiếu FP32 độc lập, sai số tối đa 0. Chỉ tải khoảng 12,59 MB cho projection và 20,22 MB tokenizer, không tải bộ trọng số 756 GB.
+
+```powershell
+.\glm.bat runtime-plan --context 4096 --generate 32
+.\glm.bat projection-check --online --backend hybrid --budget-mib 32
+.\glm.bat tokenizer-check --online
+```
+
+[Các checkpoint và nghiệm thu](docs/CHECKPOINTS.md) · [Hướng dẫn runtime](docs/RUNTIME.md). `glm.bat` tự dùng `.venv-reference` nếu có, hoặc Python hệ thống. `generate` chạy thử nghiệm bằng token ID hoặc prompt với tokenizer cục bộ; cần đủ shard tại `--model-directory`. Theo lựa chọn của người dùng, lượt này chỉ hoàn thiện mã và kiểm tra nhỏ.
+
+Kiểm chứng Windows bản 0.9.0: **629/629 test đạt, không bỏ qua**, bật native CPU/CUDA và graph Transformers chính thức. [Bằng chứng](docs/verification/runtime-v0.9.0.json) · [Log đầy đủ](docs/verification/runtime-tests-windows-v0.9.0.txt).
 
 Đã kiểm chứng bản sửa trên Windows: **513 test đạt**, không lỗi hoặc skip; official hybrid safetensors tới **120 + 8 token** đều PASS, tối đa 2 shard mở đồng thời. [Báo cáo đóng review](docs/REVIEW-FIXES.md).
 
@@ -24,7 +69,7 @@ Report: `reports/metadata-latest.json`/Markdown và `reports/metadata/<run-id>/`
 
 **Bằng chứng lịch sử bản 0.7.0 tại Linux:** 453 test được phát hiện, 427 đạt, 26 bỏ qua, gồm 87 test mới không cần mạng/GPU. [Log](docs/verification/unit-tests-linux-v0.7.0.txt). Lần thử mạng thật của bản đó dừng ở DNS khi lấy model manifest: **0 byte metadata, 0 yêu cầu Range**; chưa xác minh config/index/header từ xa của checkpoint. [Báo cáo](docs/verification/metadata-online-attempt-linux-v0.7.0.json). Đây không phải lần nghiệm thu Windows/RTX 3070/Transformers cho bản 0.8.1.
 
-Project được tạo cho `dealignai/GLM-5.3-CYBERSECURITY-FP8`, giữ đúng checkpoint FP8 theo yêu cầu. Mã Kimi gốc được giữ bằng Git submodule tại `vendor/kimi-k3-in-c`, commit `ac1584a70205c3a00d5346f736834818f4cc11b4`. Các ý tưởng được dùng làm cơ sở là đọc trọng số theo nhu cầu, ngân sách bộ nhớ rõ ràng và kiểm tra tính đúng trước khi benchmark. Phần mới có kernel FP8 C cho CPU, PTX cho GPU và bộ điều phối thử nghiệm bằng Python. Chưa port graph Kimi sang GLM, chưa tải checkpoint thật.
+Project được tạo cho `dealignai/GLM-5.3-CYBERSECURITY-FP8`, giữ đúng checkpoint FP8 theo yêu cầu. Kimi K3 tại commit `ac1584a70205c3a00d5346f736834818f4cc11b4` là nguồn tham khảo cho cách đọc trọng số theo nhu cầu, đặt ngân sách bộ nhớ và kiểm tra tính đúng trước benchmark. Runtime không phụ thuộc source Kimi; bản sao này không còn được theo dõi hoặc đóng gói cùng project. Link upstream được giữ trong phần nguồn kiểm chứng. Kernel C/PTX và core Python trong project là đường chạy hiện tại.
 
 ## Dùng ngay trên máy này
 
@@ -73,7 +118,7 @@ Hoặc double-click `doctor.bat` để xem báo cáo và giữ cửa sổ mở. 
 - `metadata-check`: audit config/index/header từ revision đã ghim hoặc snapshot offline; lưu catalogue JSONL cùng bằng chứng nguồn.
 - `architecture-check`: đọc report metadata và catalogue được tham chiếu, kiểm tra profile cấu trúc có config; không chạy graph hoặc đọc payload.
 
-Hiện chưa có lệnh chat hoặc suy luận checkpoint thật. `doctor` tiếp tục báo `BLOCKED` cho đến khi có kiểm chứng tương thích model và giới hạn tài nguyên đầy đủ. Sửa trường `backend_status` trong JSON không mở khóa trạng thái này.
+Lệnh `generate` đã có đường backbone theo config với trọng số cục bộ và cache MLA nén. Đây là runtime thử nghiệm FP32, chưa chứng minh tương đương đường BF16 chính thức và không chạy MTP speculative decoding. `doctor` tiếp tục báo `BLOCKED` cho đến khi có kiểm chứng full checkpoint và tài nguyên. Sửa trường `backend_status` trong JSON không mở khóa trạng thái này.
 
 Kiểm chứng ngày 2026-09-11: **216 test đạt** khi bật native CPU/CUDA và tham chiếu NumPy. Decoder thu nhỏ đã khớp logits, lựa chọn attention/expert và ID sinh độc lập ở cả chuỗi 120 + 8 token. Sai số logits lớn nhất khoảng 1,18e-7; RSS worker đỉnh 138,48 MiB trong lần kiểm tra biên. Policy readback xác nhận CPU 70% / commit 32.000.000.000 byte. [Chi tiết miniature](docs/MINI-DECODER.md) và [phép thử FP8 trước đó](docs/FP8-PROBE.md).
 
@@ -108,7 +153,6 @@ GLM và Kimi có graph khác nhau. Kimi hiện chỉ chạy CPU. GPU này cần 
 
 | Đường dẫn | Chức năng |
 |---|---|
-| `vendor/kimi-k3-in-c/` | Source upstream nguyên trạng, ghim commit, giữ license Apache-2.0 |
 | `glm_local/checkpoint_check.py` | Điều phối audit metadata, Windows worker, catalogue và report theo từng run |
 | `glm_local/checkpoint_http.py` | HTTP Range nghiêm ngặt, ghim revision, giới hạn body/read/redirect/thời gian |
 | `glm_local/checkpoint_snapshot.py` | Snapshot header/JSON có hash và replay offline không gọi mạng |
@@ -143,7 +187,7 @@ GLM và Kimi có graph khác nhau. Kimi hiện chỉ chạy CPU. GPU này cần 
 | `docs/model-metadata.json` | Snapshot manifest đã kiểm tra, để dùng offline |
 | `docs/BACKEND.md` | Phần backend còn phải phát triển và các điều kiện nghiệm thu |
 
-Sau khi clone bản project có commit này ở nơi khác, khôi phục upstream bằng `git submodule update --init --recursive`. Thư mục model, báo cáo máy và trọng số được loại khỏi Git. Các script không thay đổi power limit, clock hoặc driver.
+Không cần tải Git submodule sau khi clone. Thư mục trọng số `/models/`, báo cáo máy và output build được loại khỏi Git; profile `config/models/` và snapshot `docs/models/` vẫn được theo dõi đầy đủ. Các script không thay đổi power limit, clock hoặc driver.
 
 ## Nguồn kiểm chứng
 
@@ -153,4 +197,4 @@ Sau khi clone bản project có commit này ở nơi khác, khôi phục upstrea
 - [Microsoft: giới hạn committed memory](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_extended_limit_information)
 - [NVIDIA: GPU utilization và memory là các chỉ số khác nhau](https://docs.nvidia.com/deploy/nvidia-smi/index.html)
 
-Phần mã mới dùng MIT; upstream giữ nguyên Apache-2.0 và NOTICE riêng. License checkpoint tách biệt với license công cụ.
+Mã của project dùng MIT. Kimi upstream được tham khảo qua link và giữ license Apache-2.0 riêng; source đó không được đóng gói cùng tool. License checkpoint tách biệt với license công cụ.

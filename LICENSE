@@ -20,5 +20,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-The vendor/kimi-k3-in-c submodule is independently licensed under Apache-2.0;
-see its LICENSE and NOTICE. Model weights are not included.
+Model weights are not included and retain their own licenses.
+Kimi K3 was consulted as an independently licensed Apache-2.0 reference project;
+its source is not bundled here. The pinned upstream link is retained in README.md.

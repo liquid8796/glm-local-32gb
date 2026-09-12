@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <AssemblyName>modeldesk-download-bench</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ModelDesk.Core\ModelDesk.Core.csproj" />
+    <ProjectReference Include="..\..\src\ModelDesk.Infrastructure\ModelDesk.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

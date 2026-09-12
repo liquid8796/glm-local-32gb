@@ -17,19 +17,25 @@ from .checkpoint_http import (FetchLimits, HttpMetadataSource, MAX_SHARDS, Metad
 from .checkpoint_schema import (compare_snapshot, review_tensors, runtime_index_policy,
                                 validate_index, validate_manifest)
 from .checkpoint_snapshot import EvidenceStore, OfflineMetadataSource, write_json
+from .checkpoint_resume import ResumingMetadataSource
+from .model_profiles import metadata_snapshot_path, reports_directory
 from .safetensor_reader import MAX_READ_BYTES, parse_header_bytes
 from .winjob import JobLimits, run_local_process
 
 EXIT_CODES = {"PASS": 0, "ERROR": 1, "PARTIAL": 2, "REVIEW_REQUIRED": 3, "INTERRUPTED": 130}
 
 
-def validate_parameters(max_shards, budget_mib, offline):
+def validate_parameters(max_shards, budget_mib, offline, resume=None):
     if type(max_shards) is not int or not 1 <= max_shards <= MAX_SHARDS:
         raise MetadataError("max_shards must be an integer from 1 to 512")
     if type(budget_mib) is not int or not 1 <= budget_mib <= 128:
         raise MetadataError("budget_mib must be an integer from 1 to 128")
     if offline is not None and (not isinstance(offline, str) or not offline):
         raise MetadataError("offline must be an evidence directory path or null")
+    if resume is not None and (not isinstance(resume, str) or not resume):
+        raise MetadataError("resume must be an evidence directory path or null")
+    if offline is not None and resume is not None:
+        raise MetadataError("offline and resume are mutually exclusive")
 
 
 def initial_report(settings, parameters):
@@ -59,20 +65,30 @@ def _file_digest(path):
     return {"name": path.name, "bytes": count, "sha256": result.hexdigest()}
 
 
-def _record_payload_accounting(report, declared, observed, *, complete):
+def _record_payload_accounting(report, declared, observed, *, complete,
+                               header_bytes=0, shard_file_bytes=None):
     """Retain accounting evidence even when its validation immediately fails."""
-    invalid = observed > declared or (complete and observed != declared)
+    payload_match = observed == declared
+    file_match = (shard_file_bytes is not None and declared == shard_file_bytes
+                  and observed + header_bytes == shard_file_bytes)
+    invalid = observed > declared or (complete and not (payload_match or file_match))
     report["tensor_payload_accounting"] = {
         "declared_index_total_size": declared,
         "referenced_header_payload_bytes": observed,
         "observed_minus_declared_bytes": observed - declared,
         "exact_match": observed == declared,
         "complete": complete,
+        "index_size_convention": ("tensor_payload" if complete and payload_match else
+                                  "complete_shard_files" if complete and file_match else "unresolved"),
+        "observed_prefix_and_header_bytes": header_bytes,
+        "manifest_shard_file_bytes": shard_file_bytes,
+        "payload_plus_headers_matches_manifest": file_match,
         "validation_mode": "strict_exact_total_after_all_headers",
         "validation_status": "error" if invalid else "verified" if complete else "deferred",
-        "note": ("This supported index profile requires the sum of indexed header tensor bytes "
-                 "to equal metadata.total_size after all shard headers are checked. "
-                 "Partial runs enforce only the upper bound; equality is deferred.")
+        "note": ("After all headers, total_size must equal tensor payload bytes, or exactly the "
+                 "manifest shard-file sum with every differing byte accounted for by the received "
+                 "8-byte prefixes and headers. Partial runs defer this proof. The legacy field "
+                 "declared_tensor_payload_bytes stores index.total_size even for the file convention.")
     }
     report["observed_tensor_payload_bytes"] = observed  # Described bytes, NOT fetched bytes.
     report["declared_tensor_payload_bytes"] = declared
@@ -86,7 +102,7 @@ def execute_metadata(root, settings, parameters, directory, *, source=None):
         validate_settings(settings)
         validate_target(settings["model_id"], settings["revision"])
         validate_parameters(**parameters)
-        expected_path = root / "docs" / "model-metadata.json"
+        expected_path = metadata_snapshot_path(root, settings)
         if not 1 <= expected_path.stat().st_size <= 1024**2:
             raise MetadataError("Project baseline metadata snapshot exceeds 1 MiB")
         expected = strict_json(expected_path.read_bytes())
@@ -96,7 +112,9 @@ def execute_metadata(root, settings, parameters, directory, *, source=None):
         limits = FetchLimits(total_body_bytes=parameters["budget_mib"] * 1024**2)
         report["stage"] = "source_initialization"
         if source is None:
-            source = (OfflineMetadataSource(parameters["offline"], settings["model_id"], settings["revision"], limits=limits)
+            source = (ResumingMetadataSource(parameters["resume"], settings["model_id"], settings["revision"], limits=limits)
+                      if parameters.get("resume") is not None else
+                      OfflineMetadataSource(parameters["offline"], settings["model_id"], settings["revision"], limits=limits)
                       if parameters["offline"] is not None else
                       HttpMetadataSource(settings["model_id"], settings["revision"], limits=limits))
         store = EvidenceStore(directory / "evidence", settings["model_id"], settings["revision"])
@@ -104,6 +122,8 @@ def execute_metadata(root, settings, parameters, directory, *, source=None):
         report["source_mode"] = source.mode
         report["provenance_scope"] = ("Pinned HTTPS URLs plus model API id/sha and any supplied X-Repo-Commit"
                                       if source.mode == "online" else
+                                      "Revalidated local snapshot JSON/headers plus pinned HTTPS for missing headers; cached evidence is not remotely reauthenticated"
+                                      if source.mode == "online_resume" else
                                       "Local snapshot identity/hash consistency only; no remote reauthentication")
         documents, document_sizes = {}, {}
         for kind in ("model", "config", "index"):
@@ -129,8 +149,11 @@ def execute_metadata(root, settings, parameters, directory, *, source=None):
                               "checked_shards": 0, "total_index_tensors": len(mapping),
                               "checked_tensors": 0, "complete": False}
         payload_bytes = 0
+        header_bytes = 0
+        shard_file_bytes = sum(sizes.values())
         declared_payload = documents["index"]["metadata"]["total_size"]
-        _record_payload_accounting(report, declared_payload, payload_bytes, complete=False)
+        _record_payload_accounting(report, declared_payload, payload_bytes, complete=False,
+                                   header_bytes=header_bytes, shard_file_bytes=shard_file_bytes)
         for number, filename in enumerate(selected, 1):
             report["stage"], report["active_shard"] = "fetch_header", filename
             raw = source.header_bytes(filename, sizes[filename])
@@ -141,13 +164,15 @@ def execute_metadata(root, settings, parameters, directory, *, source=None):
                 raise MetadataError(f"Index/header tensor set mismatch in {filename}")
             tensors.update(header_tensors)
             payload_bytes += sum(t.nbytes for t in header_tensors.values())
+            header_bytes += len(raw)
             checked.append(filename)
             report["headers_checked"] = number
             complete = len(checked) == len(by_shard)
             report["coverage"].update(checked_shards=number, checked_tensors=len(tensors),
                                       complete=complete, checked_shard_names=list(checked),
                                       uninspected_shards=sorted(set(by_shard) - set(checked)))
-            _record_payload_accounting(report, declared_payload, payload_bytes, complete=complete)
+            _record_payload_accounting(report, declared_payload, payload_bytes, complete=complete,
+                                       header_bytes=header_bytes, shard_file_bytes=shard_file_bytes)
             report["stage"] = "validate_payload_accounting"
             if payload_bytes > declared_payload:
                 raise MetadataError("Observed header payload bytes already exceed index total_size")
@@ -155,12 +180,13 @@ def execute_metadata(root, settings, parameters, directory, *, source=None):
                 print(f"Metadata headers: {number}/{len(selected)} selected, {len(by_shard)} total shards", flush=True)
         report.pop("active_shard", None)
         complete = len(checked) == len(by_shard)
-        _record_payload_accounting(report, declared_payload, payload_bytes, complete=complete)
+        _record_payload_accounting(report, declared_payload, payload_bytes, complete=complete,
+                                   header_bytes=header_bytes, shard_file_bytes=shard_file_bytes)
         report["coverage"].update(complete=complete, checked_shard_names=checked,
                                   uninspected_shards=sorted(set(by_shard) - set(checked)))
         report["stage"] = "validate_payload_accounting"
-        if complete and payload_bytes != declared_payload:
-            raise MetadataError("Complete header payload bytes do not equal index total_size")
+        if report["tensor_payload_accounting"]["validation_status"] == "error":
+            raise MetadataError("Complete header payload bytes do not equal index total_size under a verified size convention")
         report["metadata_structure_verified"] = complete
         report["stage"] = "review_tensor_metadata"
         catalogue = directory / "tensor-catalogue.jsonl"
@@ -216,27 +242,30 @@ def render_metadata(report):
     return "\n".join(lines)
 
 
-def publish_report(root, directory, report, code, policy=None):
+def publish_report(root, directory, report, code, policy=None, *, settings=None):
+    report_dir = reports_directory(root, settings or {})
     report.update(installed_job_policy=policy, job_policy_verified=policy is not None,
                   child_exit_code=code, run_directory=str(directory))
     write_json(directory / "result.json", report)
-    write_json(root / "reports" / "metadata-latest.json", report)
+    write_json(report_dir / "metadata-latest.json", report)
     rendered = render_metadata(report)
     (directory / "result.md").write_text(rendered, encoding="utf-8")
-    (root / "reports" / "metadata-latest.md").write_text(rendered, encoding="utf-8")
+    (report_dir / "metadata-latest.md").write_text(rendered, encoding="utf-8")
     print(f"Metadata status: {report['status']}; full-model runtime remains unverified.", flush=True)
     print(f"Report: {directory / 'result.md'}", flush=True)
     return code
 
 
-def launch_metadata(root, settings, max_shards=MAX_SHARDS, budget_mib=64, offline=None):
+def launch_metadata(root, settings, max_shards=MAX_SHARDS, budget_mib=64, offline=None, resume=None):
     validate_settings(settings)
     parameters = {"max_shards": max_shards, "budget_mib": budget_mib,
                   "offline": str(Path(offline).absolute()) if offline is not None else None}
+    if resume is not None:
+        parameters["resume"] = str(Path(resume).absolute())
     validate_parameters(**parameters)
     root = Path(root).resolve()
     identifier = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    directory = root / "reports" / "metadata" / identifier
+    directory = reports_directory(root, settings) / "metadata" / identifier
     directory.mkdir(parents=True, exist_ok=False)
     request = directory / "request.json"
     write_json(request, {"settings": settings, "parameters": parameters})
@@ -265,4 +294,5 @@ def launch_metadata(root, settings, max_shards=MAX_SHARDS, budget_mib=64, offlin
             report.update(status="INTERRUPTED" if code == 130 else "ERROR", stage="worker_launch_or_readback",
                           error=f"{type(error).__name__}: {error}"[:2000],
                           traceback=traceback.format_exc(limit=12, chain=False)[-16000:])
-    return publish_report(root, directory, report, code, captured[0] if captured else None)
+    return publish_report(root, directory, report, code, captured[0] if captured else None,
+                          settings=settings)

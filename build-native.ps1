@@ -90,3 +90,15 @@ if ($topkResult.Stderr) { Write-Output $topkResult.Stderr.TrimEnd() }
 if ($topkResult.ExitCode -ne 0) { throw 'Bounded top-k compatibility build failed.' }
 if (-not (Test-Path -LiteralPath $topkDll -PathType Leaf)) { throw 'No top-k DLL was produced.' }
 Write-Output "Built: $topkDll"
+
+$nvfp4Source = Join-Path $projectRoot 'native\nvfp4_cpu.c'
+$nvfp4Dll = Join-Path $buildRoot 'nvfp4_cpu.dll'
+$nvfp4Object = Join-Path $buildRoot 'nvfp4_cpu.obj'
+$nvfp4Library = Join-Path $buildRoot 'nvfp4_cpu.lib'
+$compileStart.Arguments = '/nologo /TC /std:c11 /O2 /W4 /WX /fp:strict /LD /Fo"{0}" /Fe"{1}" "{2}" /link /INCREMENTAL:NO /IMPLIB:"{3}"' -f $nvfp4Object, $nvfp4Dll, $nvfp4Source, $nvfp4Library
+$nvfp4Result = Invoke-ChildProcess $compileStart
+if ($nvfp4Result.Stdout) { Write-Output $nvfp4Result.Stdout.TrimEnd() }
+if ($nvfp4Result.Stderr) { Write-Output $nvfp4Result.Stderr.TrimEnd() }
+if ($nvfp4Result.ExitCode -ne 0) { throw 'NVFP4 CPU kernel build failed.' }
+if (-not (Test-Path -LiteralPath $nvfp4Dll -PathType Leaf)) { throw 'No NVFP4 CPU DLL was produced.' }
+Write-Output "Built: $nvfp4Dll"

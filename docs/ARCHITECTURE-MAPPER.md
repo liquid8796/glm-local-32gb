@@ -1,4 +1,8 @@
-# GLM Architecture Mapper v0.8.1
+# GLM Architecture Mapper v0.10.0
+
+NVFP4 now has a separate reviewed ModelOpt0.45.0 profile for `dealignai/GLM-5.3-ABLITERATED-NVFP4` at `371bdb985d0124e76348c91e4a8fcf3a9d719d09`. Its complete inventory matches232,385 tensors:57,600 routed projections each have U8[N,K/2] weight, E4M3[N,K/16] block scale and two F32scalar ancillaries. Protected attention/shared/dense/MTP tensors remain BF16. Roles, logical/stored shapes, producer/config groups/ignore coverage and scalar shapes are independently checked; unsupported profiles still require review.
+
+The NVFP4 metadata flag verifies stored structure only. Activation W4A4 and FP8 KV-cache quantization remain unverified; current runtime uses FP32 inputs and caches. Reports are isolated by the selected model profile. See [NVFP4.md](NVFP4.md).
 
 The mapper checks checkpoint metadata against a supported GLM structure profile. It does not read tensor payloads, execute a graph or prove numerical compatibility.
 
@@ -25,7 +29,9 @@ This is a local consistency check. A user who can rewrite all local evidence can
 
 Roles use complete tensor-name patterns. Embeddings, norms, attention projections/indexer, dense MLP projections, routed experts, shared experts, router and FP8 scales are distinct. For example, `mlp.gate_proj.weight` is an MLP projection; it is not the MoE router `mlp.gate.weight`. A `weight_scale_inv` tensor is a scale, not its paired projection or router.
 
-The supported `glm_moe_dsa_unpacked_fp8_metadata_v1` profile requires config dimensions rather than miniature defaults. It checks dtype and expected shape and requires the complete tensor inventory for the configured layers, dense/MoE schedule and experts. It requires an explicit sparse-attention and full/shared-indexer schedule, unpacked experts, untied embeddings, bias-free attention/MLP, and FP8 E4M3 weights with F32 scales on a 128×128 grid. Required configuration cannot be inferred from tensor names. Packed experts, extra/MTP layers and unknown tensors need further review.
+The supported profile requires config dimensions, dtype/shape and complete layer/expert inventory. For the exact reviewed CYBERSECURITY model/revision only, missing `layer_types` and `mlp_bias` use the pinned official Transformers configuration rules, with source hashes recorded. Generic profiles remain strict. One declared MTP layer is structurally supported with its full indexer, MoE and four BF16 projection/norm extras. MTP results prove inventory only; ordinary generation executes the 78-layer backbone. Other MTP profiles, packed experts and unknown tensors require review.
+
+Live verification read 282 headers and 118,629 tensors: 59,044 FP8 pairs, 78 backbone layers plus one MTP layer, zero findings. For this checkpoint's complete-file `total_size`, the mapper reconstructs exact header overhead from hashed snapshot evidence before acceptance.
 
 Layer numbers appearing in a name alone cannot verify a layer. Unknown names, unsupported profiles and incomplete inventories return `REVIEW_REQUIRED` and retain findings for review. A structural match does not validate scale values, kernel behavior, tokenizer, RoPE values or activation/cache memory.
 
@@ -41,4 +47,4 @@ Read the findings as well as the status. The exit code 2 here belongs to `archit
 
 Metadata-only results leave `real_checkpoint_compatible`, `full_model_loaded`, `inference_verified`, `full_model_limits_verified` and `payload_values_verified` false. The metadata audit also leaves `architecture_mapping_verified` false; the separate mapper can verify only its documented structural profile. `doctor` remains blocked until the runtime and full checkpoint are independently validated.
 
-No executable FP8 descriptors or residency planner are delivered by this command. The next step is to review a complete catalogue from the pinned checkpoint, resolve unsupported layout/dtype/schedule findings, and then implement bounded execution descriptors and numerical parity for selected real projections.
+Separate `projection-check`, `runtime-plan`, `tokenizer-check` and `generate` commands implement the execution path. See [RUNTIME.md](RUNTIME.md). This command remains metadata-only.

@@ -94,28 +94,34 @@
                 <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
               <TextBox Text="{Binding ModelId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Mở trực tiếp: owner/model" AutomationProperties.Name="Hugging Face model ID" />
-              <TextBox Grid.Column="1" Text="{Binding Revision}" Margin="8,0,0,0" ToolTip="Branch hoặc revision" AutomationProperties.Name="Revision" />
+              <TextBox Grid.Column="1" Text="{Binding Revision, UpdateSourceTrigger=PropertyChanged}" Margin="8,0,0,0" ToolTip="Branch hoặc revision" AutomationProperties.Name="Revision" />
               <Button Grid.Column="2" Content="Mở" Command="{Binding OpenCommand}" Margin="8,0,0,0" Padding="14,7" />
             </Grid>
             <TextBlock Grid.Row="1" Text="{Binding DetailSummary}" FontFamily="Cascadia Code, Consolas" FontSize="10" Foreground="{DynamicResource MutedBrush}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip="{Binding DetailSummary}" Margin="0,8,0,10" />
             <DockPanel Grid.Row="2" Margin="0,0,0,9">
-              <TextBox Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}" Width="175" MinHeight="31" Padding="9,5" DockPanel.Dock="Right" Margin="10,0,0,0" ToolTip="Lọc tên tệp" AutomationProperties.Name="Lọc tên tệp" />
+              <ComboBox ItemsSource="{Binding DownloadFilters}" SelectedItem="{Binding DownloadFilter}" Width="105" MinHeight="31" DockPanel.Dock="Right" Margin="8,0,0,0" ToolTip="Lọc trạng thái tải" AutomationProperties.Name="Lọc tệp đã tải hoặc chưa tải" />
+              <TextBox Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}" Width="135" MinHeight="31" Padding="9,5" DockPanel.Dock="Right" Margin="8,0,0,0" ToolTip="Lọc tên tệp" AutomationProperties.Name="Lọc tên tệp" />
               <WrapPanel VerticalAlignment="Center">
                 <Button Content="Tất cả" Command="{Binding SelectAllCommand}" Style="{StaticResource CompactButton}" Margin="0,0,6,0" />
                 <Button Content="Đang lọc" Command="{Binding SelectVisibleCommand}" Style="{StaticResource CompactButton}" Margin="0,0,6,0" />
                 <Button Content="Bỏ chọn" Command="{Binding SelectNoneCommand}" Style="{StaticResource CompactButton}" />
               </WrapPanel>
             </DockPanel>
-            <DataGrid x:Name="ModelFilesGrid" Grid.Row="3" ItemsSource="{Binding FilesView}" RowHeight="35" AutomationProperties.Name="Danh sách tệp của model">
+            <DataGrid x:Name="ModelFilesGrid" Grid.Row="3" ItemsSource="{Binding FilesView}" RowHeight="35" IsReadOnly="True" PreviewMouseLeftButtonDown="FileSelectionMouseDown" PreviewKeyDown="FileSelectionKeyDown" AutomationProperties.Name="Danh sách tệp của model">
               <DataGrid.Columns>
                 <DataGridTemplateColumn Header="Chọn" Width="65">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
-                      <CheckBox IsChecked="{Binding Selected, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="{Binding Path}" HorizontalAlignment="Center" Margin="0" />
+                      <CheckBox IsChecked="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanSelect}" Visibility="{Binding ShowSelection, Converter={StaticResource BoolVisibility}}" AutomationProperties.Name="{Binding Path}" ToolTip="{Binding LocalMessage}" HorizontalAlignment="Center" Margin="0" />
                     </DataTemplate>
                   </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Tên tệp" Binding="{Binding Path}" Width="*" IsReadOnly="True" />
+                <DataGridTemplateColumn Header="Trạng thái" SortMemberPath="LocalStateLabel" Width="125">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate><TextBlock Text="{Binding LocalStateLabel}" ToolTip="{Binding LocalMessage}" FontSize="11" /></DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Dung lượng" Binding="{Binding Size}" Width="92" IsReadOnly="True" />
                 <DataGridTextColumn Header="Hash" Binding="{Binding Hash}" Width="94" IsReadOnly="True" />
               </DataGrid.Columns>
@@ -123,12 +129,17 @@
             <StackPanel Grid.Row="4" Margin="0,11,0,0">
               <DockPanel>
                 <Button Content="Thư mục…" Command="{Binding BrowseCommand}" DockPanel.Dock="Right" Margin="8,0,0,0" Style="{StaticResource CompactButton}" />
-                <TextBox Text="{Binding DownloadDirectory}" MinHeight="33" Padding="9,6" ToolTip="Thư mục đích của model" AutomationProperties.Name="Thư mục tải model" />
+                <Button Content="Quét lại" Command="{Binding RefreshFilesCommand}" DockPanel.Dock="Right" Margin="8,0,0,0" Style="{StaticResource CompactButton}" />
+                <TextBox Text="{Binding DownloadDirectory, UpdateSourceTrigger=PropertyChanged}" MinHeight="33" Padding="9,6" ToolTip="Thư mục đích của model" AutomationProperties.Name="Thư mục tải model" />
+              </DockPanel>
+              <DockPanel Margin="0,5,0,0">
+                <TextBlock Text="{Binding ScanStatus}" FontSize="11" Foreground="{DynamicResource MutedBrush}" DockPanel.Dock="Right" />
+                <TextBlock Text="{Binding ScanError}" FontSize="11" Foreground="{DynamicResource DangerBrush}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding ScanError}" />
               </DockPanel>
               <DockPanel Margin="0,9,0,0">
                 <Button Content="Tải toàn bộ" Command="{Binding DownloadAllCommand}" DockPanel.Dock="Right" Style="{StaticResource CompactButton}" Margin="8,0,0,0" />
                 <Button Content="Tải đã chọn" Command="{Binding DownloadSelectedCommand}" DockPanel.Dock="Right" Style="{StaticResource Primary}" MinHeight="33" Padding="12,7" Margin="9,0,0,0" />
-                <TextBlock Text="{Binding SelectionSummary}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip="{Binding SelectionSummary}" />
+                <TextBlock Text="{Binding SelectionSummary}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip="Giữ Shift khi bấm điểm đầu/cuối để chọn một dải tệp." />
               </DockPanel>
             </StackPanel>
             <Expander x:Name="ModelReadme" Grid.Row="5" Header="README · văn bản" Margin="0,9,0,0">

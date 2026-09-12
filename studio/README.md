@@ -1,5 +1,11 @@
 # ModelDesk
 
+**Bản 1.0.2**: chọn kết quả tìm kiếm sẽ tự mở model ở bên phải. Trang Hub quét thư mục khi mở model, đổi thư mục, trở lại tab hoặc một lượt tải của model hoàn tất. File đích có đủ dung lượng được đánh dấu **Đã tải** và ẩn checkbox; file `.part` vẫn là tải dở. Bộ lọc hỗ trợ **Tất cả / Đã tải / Chưa tải**. Giữ Shift rồi bấm checkbox hoặc hàng cuối để chọn một dải theo thứ tự đang lọc/sắp xếp; các file đã tải hoặc không truy cập được bị bỏ qua.
+
+Trang Tải xuống có **Xóa danh sách**: chờ tác vụ đang tải dừng an toàn, dọn hàng đợi lưu trên máy và reset số lượng/byte/tốc độ về 0. File hoàn tất và dữ liệu tải dở vẫn giữ nguyên. Bấm tiêu đề **Tên tệp** hoặc **Model** để sắp xếp; dùng bộ lọc **Trạng thái** để thu gọn danh sách. Thống kê tổng vẫn tính toàn hàng đợi, không bị thay đổi bởi bộ lọc.
+
+Quét thư mục chỉ đọc metadata filesystem (tên và dung lượng) để phản hồi nhanh với model lớn. Nó không đọc lại hàng trăm GB để kiểm chứng hash; hash vẫn được xác minh trong quá trình tải. Nếu copy/xóa file bằng công cụ khác, bấm **Quét lại** hoặc mở lại tab Hub để cập nhật.
+
 **Bản 1.0.1** sửa lỗi mở EXE nhưng không hiện cửa sổ: bỏ chờ đồng bộ trên tác vụ đọc file bất đồng bộ trong quá trình nạp profile. Cửa sổ hiện trước khi nạp workspace, và việc quét profile chạy ngoài luồng UI. Nếu đang dùng bản 1.0.0, build lại hoặc publish lại để thay toàn bộ các DLL đi kèm EXE.
 
 ModelDesk là ứng dụng WPF và CLI cho việc tải model từ Hugging Face, quản lý checkpoint cục bộ và sử dụng Python core GLM hiện có. GUI và CLI dùng chung các service C#; phần Python được giữ nguyên. Trình tải có thể tải repository ngoài hai profile GLM, nhưng việc tải đủ tệp không xác nhận model đó có thể suy luận bằng Python core này.

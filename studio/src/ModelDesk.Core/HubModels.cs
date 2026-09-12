@@ -25,6 +25,15 @@ public interface IHuggingFaceClient
     Task<HubModelDetail> GetModelAsync(string modelId, string revision = "main", CancellationToken cancellationToken = default);
 }
 
+public enum LocalModelFileState { Missing, Downloaded, Partial, SizeMismatch, Unavailable }
+public sealed record LocalModelFileStatus(string Path, LocalModelFileState State,
+    long? LocalBytes = null, string? Message = null);
+public interface ILocalModelFileInventory
+{
+    Task<IReadOnlyList<LocalModelFileStatus>> ScanAsync(string directory, IReadOnlyList<HubFile> files,
+        CancellationToken cancellationToken = default);
+}
+
 public sealed record DownloadRequest(string ModelId, string Revision, HubFile File, string DestinationDirectory);
 public sealed record DownloadProgress(string FilePath, long DownloadedBytes, long TotalBytes,
     double BytesPerSecond, TimeSpan? Remaining, string Stage);

@@ -13,7 +13,11 @@ internal static partial class DownloadPaths
         if (request.File.Size is < 0 or > 8_796_093_022_208 ||
             !(HubHttp.IsSha256(request.File.LfsSha256) || request.File.LfsSha256 is null && HubHttp.IsSha1(request.File.BlobId)))
             throw new ArgumentException("A bounded file size and LFS SHA-256 or Git blob SHA-1 are required.");
-        var relative = request.File.Path;
+        return ResolveFile(request.DestinationDirectory, request.File.Path);
+    }
+
+    internal static string ResolveFile(string directory, string relative)
+    {
         if (string.IsNullOrWhiteSpace(relative) || relative.Length > 4096 || relative.Contains('\\') || Path.IsPathRooted(relative))
             throw new ArgumentException("Download file path must be relative to its repository.");
         foreach (var part in relative.Split('/'))
@@ -26,7 +30,7 @@ internal static partial class DownloadPaths
         if (relative.EndsWith(".part", StringComparison.OrdinalIgnoreCase) || relative.EndsWith(".part.json", StringComparison.OrdinalIgnoreCase) ||
             relative.EndsWith(".download.lock", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Download path collides with a reserved transfer-state filename.");
-        var root = Root(request.DestinationDirectory);
+        var root = Root(directory);
         var destination = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
         if (!destination.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Download file resolves outside its destination directory.");

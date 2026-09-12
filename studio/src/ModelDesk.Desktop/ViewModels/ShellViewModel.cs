@@ -15,12 +15,12 @@ public sealed class ShellViewModel : ObservableObject
     private int tab;
     private bool initializing;
     private string error = "", readiness = "Chưa có báo cáo sẵn sàng", readinessDetail = "Chạy kiểm tra để cập nhật thông tin phần cứng và trọng số cục bộ.";
-    public ShellViewModel(ISettingsStore store, ICredentialStore credentials, IPythonCoreService core, IReportService reports, IHuggingFaceClient hub, IModelDownloader downloader, IDownloadQueueStore queue, Func<AppSettings>? discover = null)
+    public ShellViewModel(ISettingsStore store, ICredentialStore credentials, IPythonCoreService core, IReportService reports, IHuggingFaceClient hub, IModelDownloader downloader, IDownloadQueueStore queue, Func<AppSettings>? discover = null, ILocalModelFileInventory? inventory = null)
     {
         this.store = store; this.core = core; discoverDefaults = discover;
         Task = new(core, () => current); Run = new(Task); Validation = new(Task);
         Task.IsAvailable = false;
-        Downloads = new(downloader, queue, () => current); Hub = new(hub, Downloads, () => current);
+        Downloads = new(downloader, queue, () => current); Hub = new(hub, Downloads, () => current, inventory);
         Reports = new(reports, () => current, () => SelectedProfile);
         Settings = new(store, credentials, () => current, ApplyAsync, discover);
         DoctorCommand = new AsyncCommand(_ => Task.RunAsync("doctor"), ShowError, _ => Task.IsAvailable && !Task.IsBusy);
@@ -87,7 +87,7 @@ public sealed class ShellViewModel : ObservableObject
         finally { IsInitializing = false; }
     }
     public void ShowError(Exception exception) { Error = exception.Message; DiagnosticLog.Write(exception.ToString()); }
-    public async Task CloseAsync() => await System.Threading.Tasks.Task.WhenAll(Task.StopAsync(), Downloads.StopAsync());
+    public async Task CloseAsync() => await System.Threading.Tasks.Task.WhenAll(Hub.StopAsync(), Task.StopAsync(), Downloads.StopAsync());
     private string Resolve(string path) => Path.IsPathRooted(path) ? path : Path.Combine(current.ProjectRoot, path);
     private async Task ApplyAsync(AppSettings settings)
     {

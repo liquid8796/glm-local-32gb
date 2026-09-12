@@ -20,29 +20,43 @@
             <Button Content="Tiếp tục hàng đợi" Command="{Binding ResumeAllCommand}" Style="{StaticResource CompactButton}" Margin="0,0,8,0" />
             <Button Content="Tạm dừng tất cả" Command="{Binding PauseAllCommand}" Style="{StaticResource CompactButton}" Margin="0,0,8,0" />
             <Button Content="Hủy tất cả" Command="{Binding CancelAllCommand}" Style="{StaticResource CompactButton}" />
+            <Button Command="{Binding ClearCommand}" Margin="8,0,0,0" ToolTip="Chỉ xóa hàng đợi. Giữ nguyên các tệp đã tải và tệp dở.">
+              <Button.Style><Style TargetType="Button" BasedOn="{StaticResource CompactButton}"><Setter Property="Content" Value="Xóa danh sách"/><Style.Triggers><DataTrigger Binding="{Binding IsClearing}" Value="True"><Setter Property="Content" Value="Đang xóa…"/></DataTrigger></Style.Triggers></Style></Button.Style>
+            </Button>
           </WrapPanel>
         </StackPanel>
       </DockPanel>
     </Border>
     <StackPanel Grid.Row="2">
-      <TextBlock Text="{Binding Error}" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8" />
-      <TextBlock Text="{Binding EmptyText}" Style="{StaticResource Muted}" Margin="0,0,0,8" />
+      <DockPanel Margin="0,0,0,10">
+        <TextBlock Text="{Binding VisibleSummary}" Style="{StaticResource Muted}" DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="12" />
+        <TextBlock Text="Trạng thái" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,10,0" />
+        <ComboBox ItemsSource="{Binding StatusFilters}" SelectedItem="{Binding StatusFilter}" DisplayMemberPath="Label" Width="190" HorizontalAlignment="Left" AutomationProperties.Name="Lọc hàng đợi theo trạng thái" />
+      </DockPanel>
+      <TextBlock Text="{Binding Error}" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8">
+        <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding Error}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+      </TextBlock>
+      <TextBlock Text="{Binding EmptyText}" Margin="0,0,0,8">
+        <TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource Muted}"><Style.Triggers><DataTrigger Binding="{Binding EmptyText}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+      </TextBlock>
     </StackPanel>
-    <DataGrid Grid.Row="3" ItemsSource="{Binding Items}" IsReadOnly="True" RowHeight="78" MinHeight="140">
+    <DataGrid Grid.Row="3" ItemsSource="{Binding View}" SelectedItem="{Binding SelectedItem}" IsReadOnly="True" RowHeight="78" MinHeight="140" CanUserSortColumns="True">
       <DataGrid.Columns>
-        <DataGridTemplateColumn Header="Tệp / model" Width="*" MinWidth="190">
+        <DataGridTemplateColumn Header="Tên tệp" Width="1.2*" MinWidth="180" SortMemberPath="FileName" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <StackPanel>
                 <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding FileName}" />
-                <TextBlock Text="{Binding ModelId}" Foreground="{DynamicResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" Margin="0,4,0,0" />
                 <TextBlock Text="{Binding Error}" FontSize="10" Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding Error}" />
               </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="Trạng thái" Binding="{Binding StateLabel}" Width="105" />
-        <DataGridTemplateColumn Header="Tiến độ" Width="180">
+        <DataGridTextColumn Header="Model" Binding="{Binding ModelId}" Width="*" MinWidth="160" SortMemberPath="ModelId" CanUserSort="True">
+          <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="NoWrap"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding ModelId}"/><Setter Property="FontSize" Value="12"/></Style></DataGridTextColumn.ElementStyle>
+        </DataGridTextColumn>
+        <DataGridTextColumn Header="Trạng thái" Binding="{Binding StateLabel}" Width="105" SortMemberPath="State" />
+        <DataGridTemplateColumn Header="Tiến độ" Width="160" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <StackPanel>
@@ -53,8 +67,8 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="Còn lại" Binding="{Binding Eta}" Width="90" />
-        <DataGridTemplateColumn Header="Thao tác" Width="245">
+        <DataGridTextColumn Header="Còn lại" Binding="{Binding Eta}" Width="75" CanUserSort="False" />
+        <DataGridTemplateColumn Header="Thao tác" Width="235" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <WrapPanel>
@@ -68,6 +82,6 @@
         </DataGridTemplateColumn>
       </DataGrid.Columns>
     </DataGrid>
-    <TextBlock Grid.Row="4" Text="Tệp tải dở được giữ lại khi dừng hoặc hủy. Khi mở lại ứng dụng, tác vụ chưa xong ở trạng thái tạm dừng để bạn quyết định tiếp tục." Style="{StaticResource Muted}" FontSize="12" Margin="0,14,0,0" />
+    <TextBlock Grid.Row="4" Text="Xóa danh sách chỉ đặt lại hàng đợi và thống kê; các tệp đã tải và tệp dở vẫn được giữ nguyên. Có thể thêm model mới sau khi xóa." Style="{StaticResource Muted}" FontSize="12" Margin="0,14,0,0" />
   </Grid>
 </UserControl>

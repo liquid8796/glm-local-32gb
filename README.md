@@ -1,21 +1,28 @@
 # GLM Local 32GB — decoder và đọc trọng số theo khối
 
-**Trạng thái 0.7.0: thêm kiểm tra metadata checkpoint đã ghim bằng HTTP Range và snapshot offline. Không tải payload trọng số, chưa chạy checkpoint đầy đủ.**
+**Trạng thái 0.8.1: sửa luồng catalogue metadata → architecture, kiểm tra đúng nguồn/config/shape/tensor bắt buộc và điều kiện báo PASS. Chưa chạy checkpoint đầy đủ.**
+
+Đã kiểm chứng bản sửa trên Windows: **513 test đạt**, không lỗi hoặc skip; official hybrid safetensors tới **120 + 8 token** đều PASS, tối đa 2 shard mở đồng thời. [Báo cáo đóng review](docs/REVIEW-FIXES.md).
+
+`architecture-check` đọc file JSONL được report metadata tham chiếu và xác minh nguồn bằng digest/identity trước khi phân tích. Tên tensor được ánh xạ theo mẫu đầy đủ; projection `gate_proj` và tensor scale có vai trò riêng với MoE router. Profile được hỗ trợ phải khớp config, dtype, shape và đủ tensor từng layer/expert. Tên hoặc profile chưa hỗ trợ trả `REVIEW_REQUIRED`; report hoặc bằng chứng nguồn không hợp lệ trả `ERROR`. Chênh lệch `index.total_size` chưa giải thích được cũng chặn metadata PASS. [Hướng dẫn architecture](docs/ARCHITECTURE-MAPPER.md).
+
+Các kết quả metadata/architecture chỉ kiểm tra cấu trúc. Chúng không bật cờ tương thích checkpoint thật, tính đúng suy luận hoặc giới hạn tài nguyên full model; `doctor` vẫn `BLOCKED`.
 
 Baseline **0.6.1 đã được nghiệm thu trên Windows** qua `reports(2).zip`: 376 test OK và bốn ca official hybrid safetensors PASS, gồm 120 + 8 token; serializer TensorSpec chạy với safetensors 0.8.0 thực. Đây là bằng chứng người dùng gửi trước bản vá này, không phải lần chạy Windows mới. [Biên bản](docs/verification/windows-acceptance-v0.6.1.md).
 
-Bản 0.7.0 thêm `metadata-check`: đọc model manifest, `config.json`, index và **chỉ prefix/header** của từng shard; đối chiếu index/header, tensor dtype/shape và cặp scale 128×128 theo profile hiện tại. Tensor chưa được nhận diện vẫn được ghi vào catalogue là `not_reviewed`; không dùng mapping miniature để tuyên bố tương thích GLM thật. [Hướng dẫn metadata](docs/CHECKPOINT-METADATA.md) · [Current Memory Snapshot](docs/CURRENT-MEMORY.md).
+`metadata-check` (được thêm ở bản 0.7.0) đọc model manifest, `config.json`, index và **chỉ prefix/header** của từng shard; đối chiếu index/header, tensor dtype/shape và cặp scale 128×128 theo profile hiện tại. Tensor chưa được nhận diện vẫn được ghi vào catalogue là `not_reviewed`; không dùng mapping miniature để tuyên bố tương thích GLM thật. [Hướng dẫn metadata](docs/CHECKPOINT-METADATA.md) · [Current Memory Snapshot](docs/CURRENT-MEMORY.md).
 
 ```powershell
-.\test-reference.bat 2>&1 | Tee-Object -FilePath .\reports\test-reference-v0.7.0.log
+.\test-reference.bat 2>&1 | Tee-Object -FilePath .\reports\test-reference-v0.8.1.log
 .\glm.bat metadata-check
+.\glm.bat architecture-check
 ```
 
 Giữ `.venv-reference` và `build` hiện có khi chép bản mới. **Không cần build lại DLL hoặc cài thêm thư viện** cho lệnh metadata; kernel C/CUDA, graph, dependency/revision lock và quota giữ nguyên. Parser header được tách thành hàm dùng chung cho reader cũ và checker mới, không nới policy reader. Trên Windows, metadata worker cũng được gắn Job Object trước khi chạy (CPU 70%, committed memory 32.000.000.000 byte theo cấu hình); không tạo CUDA context.
 
 Report: `reports/metadata-latest.json`/Markdown và `reports/metadata/<run-id>/`. Mặc định đọc tối đa 512 shard và 64 MiB body metadata; **không dùng tải toàn file khi server bỏ qua Range**. `PASS` chỉ có nghĩa bước metadata đạt, không gỡ `doctor BLOCKED`.
 
-Kiểm thử mới tại Linux: **453 test được phát hiện, 427 đạt, 26 bỏ qua**, gồm **87 test mới** không cần mạng/GPU. [Log](docs/verification/unit-tests-linux-v0.7.0.txt). Lần thử mạng thật tại đây dừng ở DNS khi lấy model manifest: **0 byte metadata, 0 yêu cầu Range**; chưa xác minh config/index/header từ xa của checkpoint. [Báo cáo](docs/verification/metadata-online-attempt-linux-v0.7.0.json). Chưa chạy lại Windows/RTX 3070/Transformers đúng revision cho 0.7.0 tại môi trường này.
+**Bằng chứng lịch sử bản 0.7.0 tại Linux:** 453 test được phát hiện, 427 đạt, 26 bỏ qua, gồm 87 test mới không cần mạng/GPU. [Log](docs/verification/unit-tests-linux-v0.7.0.txt). Lần thử mạng thật của bản đó dừng ở DNS khi lấy model manifest: **0 byte metadata, 0 yêu cầu Range**; chưa xác minh config/index/header từ xa của checkpoint. [Báo cáo](docs/verification/metadata-online-attempt-linux-v0.7.0.json). Đây không phải lần nghiệm thu Windows/RTX 3070/Transformers cho bản 0.8.1.
 
 Project được tạo cho `dealignai/GLM-5.3-CYBERSECURITY-FP8`, giữ đúng checkpoint FP8 theo yêu cầu. Mã Kimi gốc được giữ bằng Git submodule tại `vendor/kimi-k3-in-c`, commit `ac1584a70205c3a00d5346f736834818f4cc11b4`. Các ý tưởng được dùng làm cơ sở là đọc trọng số theo nhu cầu, ngân sách bộ nhớ rõ ràng và kiểm tra tính đúng trước khi benchmark. Phần mới có kernel FP8 C cho CPU, PTX cho GPU và bộ điều phối thử nghiệm bằng Python. Chưa port graph Kimi sang GLM, chưa tải checkpoint thật.
 
@@ -63,6 +70,8 @@ Hoặc double-click `doctor.bat` để xem báo cáo và giữ cửa sổ mở. 
 - `parity`: đối chiếu cùng fixture với graph Transformers nguyên trạng trên CPU FP32, gồm 12 hidden states mỗi token, logits và lựa chọn attention/expert. Phía native hybrid vẫn chạy output head trên GPU.
 - `test-reference.bat`: kiểm tra provenance rồi chạy toàn bộ test, bật cả Torch/Transformers, C và CUDA.
 - `storage-check`: đối chiếu metadata/byte tensor, đọc FP8 với scale F32 theo khối 128×128 rồi tính trên CPU/GPU. Không mở checkpoint model thật.
+- `metadata-check`: audit config/index/header từ revision đã ghim hoặc snapshot offline; lưu catalogue JSONL cùng bằng chứng nguồn.
+- `architecture-check`: đọc report metadata và catalogue được tham chiếu, kiểm tra profile cấu trúc có config; không chạy graph hoặc đọc payload.
 
 Hiện chưa có lệnh chat hoặc suy luận checkpoint thật. `doctor` tiếp tục báo `BLOCKED` cho đến khi có kiểm chứng tương thích model và giới hạn tài nguyên đầy đủ. Sửa trường `backend_status` trong JSON không mở khóa trạng thái này.
 
@@ -104,6 +113,7 @@ GLM và Kimi có graph khác nhau. Kimi hiện chỉ chạy CPU. GPU này cần 
 | `glm_local/checkpoint_http.py` | HTTP Range nghiêm ngặt, ghim revision, giới hạn body/read/redirect/thời gian |
 | `glm_local/checkpoint_snapshot.py` | Snapshot header/JSON có hash và replay offline không gọi mạng |
 | `glm_local/checkpoint_schema.py` | Đối chiếu index/header/config và phát hiện khoảng trống profile FP8 |
+| `glm_local/architecture/` | Xác minh nguồn catalogue, phân loại vai trò chính xác và kiểm tra cấu trúc theo config |
 | `glm_local/metadata.py` | Đọc JSON công khai có giới hạn kích thước, xác minh ID/revision và manifest |
 | `glm_local/hardware.py` | Đọc CPU/RAM/ổ đĩa qua CIM và GPU qua nvidia-smi |
 | `glm_local/audit.py` | Kiểm tra ngân sách, shard còn thiếu và những điều kiện chưa đáp ứng |

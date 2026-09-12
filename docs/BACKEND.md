@@ -1,8 +1,8 @@
 # Phần suy luận còn thiếu
 
-Đây là ghi nhận khoảng cách kỹ thuật và điều kiện nghiệm thu cho GLM. Baseline 0.6.1 đã đạt official miniature hybrid safetensors trên Windows qua report người dùng. Bản 0.7.0 thêm audit metadata checkpoint có giới hạn và offline replay. Lần truy cập từ môi trường phát triển bị lỗi DNS, nên chưa có bằng chứng header checkpoint thật ở lần này. Mục tiêu suy luận checkpoint đầy đủ **chưa hoàn tất**.
+Đây là ghi nhận khoảng cách kỹ thuật và điều kiện nghiệm thu cho GLM ở bản 0.8.1. Baseline 0.6.1 đã đạt official miniature hybrid safetensors trên Windows qua report người dùng. Bản 0.7.0 thêm audit metadata checkpoint có giới hạn và offline replay; lần truy cập lịch sử từ môi trường phát triển bị lỗi DNS. Bản 0.8.1 sửa luồng JSONL và điều kiện xác minh cấu trúc của metadata/architecture mapper. Mục tiêu suy luận checkpoint đầy đủ **chưa hoàn tất**.
 
-Xem [CHECKPOINT-METADATA.md](CHECKPOINT-METADATA.md) cho bước hiện tại. `metadata_structure_verified` và `fp8_adapter_metadata_verified` chỉ là các cờ metadata; `architecture_mapping_verified`, `real_checkpoint_compatible`, `full_model_loaded` vẫn false. Giới hạn index 1 MiB/8.192 tensor của reader chạy payload **không** được tự nới theo giới hạn 32 MiB/262.144 tensor của checker. Báo cáo riêng `runtime_index_policy` cho biết metadata có vượt policy reader hiện tại không.
+Xem [CHECKPOINT-METADATA.md](CHECKPOINT-METADATA.md) và [ARCHITECTURE-MAPPER.md](ARCHITECTURE-MAPPER.md) cho bước hiện tại. `metadata_structure_verified` và `fp8_adapter_metadata_verified` chỉ là các cờ metadata. Metadata audit luôn để `architecture_mapping_verified=false`; mapper riêng chỉ có thể xác minh profile cấu trúc sau khi nguồn, config, dtype/shape và inventory đầy đủ đều đạt. Các cờ `real_checkpoint_compatible`, `full_model_loaded`, `inference_verified`, `full_model_limits_verified`, `payload_values_verified` vẫn false trong cả hai bước. Giới hạn index 1 MiB/8.192 tensor của reader chạy payload **không** được tự nới theo giới hạn 32 MiB/262.144 tensor của checker. Báo cáo riêng `runtime_index_policy` cho biết metadata có vượt policy reader hiện tại không.
 
 ## Khác biệt đã kiểm tra
 
@@ -23,6 +23,8 @@ Không thể đổi vài hằng số hoặc tensor name để biến engine Kimi
 2. **Đọc trọng số theo ngân sách:** đã có reader safetensors với giới hạn header/read, kiểm tra dtype/offset và adapter FP8 2D + scale F32 128×128. Kiểm chứng aligned blocks với bộ giải mã HF, ragged blocks với phép mở rộng scale độc lập. Đã nối reader vào decoder synthetic nhiều tensor/bốn shard; cần xác minh tên/shape/scale thực và mô hình cấp phát activation/cache ở kích thước thật. Chưa chứng minh trần RAM vật lý toàn model.
 3. **Kết hợp CPU/GPU:** phép thử ma trận chia nhóm hàng; decoder thu nhỏ cho CPU tính các projection nội bộ và GPU tính output head. Có pacing trước mỗi lần gửi GPU. Chưa có scheduler tối ưu cho GLM hoặc benchmark đủ dài để kiểm chứng mục tiêu sử dụng GPU dưới tải model.
 4. **Kiểm chứng full checkpoint:** đủ 282 shard, kiểm tra nội dung/revision, sinh token trên model đầy đủ, so sánh với tham chiếu và đo RAM/CPU/GPU trong prefill/decode nhiều độ dài. Kiểm tra kích thước file chỉ là bước ban đầu, không chứng minh trọng số đúng hay inference đúng.
+
+Architecture mapper hiện chỉ tạo báo cáo cấu trúc; execution descriptors FP8 và residency planner CPU/GPU vẫn là công việc tiếp theo. Một catalogue có tên chưa hỗ trợ phải được review trước khi chuyển sang thực thi, kể cả metadata container đã nhất quán.
 
 Trước khi có các bằng chứng trên, không dùng kết quả unit test, policy readback hay quan sát GPU lúc nhàn rỗi làm bằng chứng model đã chạy trong giới hạn yêu cầu.
 

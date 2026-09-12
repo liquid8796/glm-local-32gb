@@ -148,10 +148,10 @@ def main(argv=None):
             from .checkpoint_check import launch_metadata
             return launch_metadata(ROOT, settings, args.max_shards, args.budget_mib, args.offline)
         if args.command == "architecture-check":
-            from .architecture.report import run_architecture
-            result = run_architecture(ROOT)
+            from .architecture.report import EXIT_CODES, run_architecture
+            result = run_architecture(ROOT, settings)
             print(json.dumps(result, indent=2))
-            return 0 if result["status"] == "PASS" else 2
+            return EXIT_CODES[result["status"]]
         if args.command == "doctor":
             return doctor(settings, args.refresh)
         if args.command == "policy-check":

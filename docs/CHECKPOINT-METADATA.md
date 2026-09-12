@@ -1,4 +1,4 @@
-# Checkpoint metadata audit — 0.7.1
+# Checkpoint metadata audit — 0.8.1
 
 ## Mục tiêu và mốc hiện tại
 
@@ -6,14 +6,14 @@ Bước này **thu thập và kiểm tra config/index/header của checkpoint đ
 
 Lệnh mới giữ `dealignai/GLM-5.3-CYBERSECURITY-FP8`, revision `5915c1b88f998a9c1e1a0c83688e285a08ae3ca5`. Không chuyển sang `main`, model khác, GGUF, tải tokenizer, thực thi remote code hoặc gọi `from_pretrained`. Cấu hình và revision lock không bị sửa.
 
-**Lần chạy tại môi trường phát triển:** DNS không phân giải được Hugging Face; dừng ở `fetch_model`, 0 byte metadata và 0 Range request. Vì thế bản phát hành này **không kèm kết luận PASS cho metadata checkpoint thật**. Xem [report truy cập](verification/metadata-online-attempt-linux-v0.7.1.json).
+**Bằng chứng lịch sử bản 0.7.0 tại môi trường phát triển:** DNS không phân giải được Hugging Face; dừng ở `fetch_model`, 0 byte metadata và 0 Range request. Lần chạy đó **không kết luận PASS cho metadata checkpoint thật**. Xem [report truy cập](verification/metadata-online-attempt-linux-v0.7.0.json). Không diễn giải báo cáo cũ thành nghiệm thu bản 0.8.1.
 
 ## Chạy trên máy người dùng
 
 Chép source mới, giữ `.venv-reference` và `build`. Không cài thêm gói và không build lại DLL: lệnh metadata chỉ dùng Python standard library. `test-reference.bat` vẫn dùng môi trường đã ghim để chạy bộ hồi quy cũ/mới.
 
 ```powershell
-.\test-reference.bat 2>&1 | Tee-Object -FilePath .\reports\test-reference-v0.7.1.log
+.\test-reference.bat 2>&1 | Tee-Object -FilePath .\reports\test-reference-v0.8.1.log
 .\glm.bat metadata-check
 ```
 
@@ -77,7 +77,7 @@ Index audit có policy riêng để kiểm tra cấu trúc lớn. Reader đang c
 | `ERROR` / 1 | Lỗi mạng, revision, JSON/header/index, budget, file snapshot hoặc worker. Có stage, active shard nếu có và traceback. |
 | `INTERRUPTED` / 130 | Người dùng dừng; không được coi là nghiệm thu thành công. |
 
-`metadata_structure_verified` chỉ bật sau khi đủ index/header hợp lệ và `total_size` khớp. Cờ này có thể true trong `REVIEW_REQUIRED`: container file nhất quán nhưng profile xử lý cần sửa. `tensor_review.fp8_adapter_metadata_verified` chỉ xét dtype/rank/grid/tên scale theo profile F32 hiện tại, không xác minh giá trị, thứ tự phép tính hay numerical parity.
+`metadata_structure_verified` chỉ bật sau khi đủ index/header hợp lệ và `total_size` khớp. Nếu tổng byte header mô tả vượt `index.metadata.total_size`, hoặc vẫn khác khi đã đọc đủ header, audit trả `ERROR`, giữ cờ cấu trúc false và dừng trước bước review FP8/tạo catalogue; số liệu declared/observed và bằng chứng header đã nhận vẫn được giữ. Trong lần đọc một phần, phép so sánh bằng nhau được hoãn nhưng vẫn kiểm tra trần tổng byte. Khi tổng byte khớp, cờ cấu trúc vẫn có thể true trong `REVIEW_REQUIRED` do container nhất quán nhưng profile xử lý cần sửa. `tensor_review.fp8_adapter_metadata_verified` chỉ xét dtype/rank/grid/tên scale theo profile F32 hiện tại, không xác minh giá trị, thứ tự phép tính hay numerical parity.
 
 Các cờ sau luôn false: `real_checkpoint_compatible`, `architecture_mapping_verified`, `full_model_loaded`, `inference_verified`, `full_model_limits_verified`, `payload_values_verified`. Không gọi hoặc thay đổi `doctor`; mốc full model của nó vẫn BLOCKED.
 
@@ -100,6 +100,8 @@ reports/metadata/<run-id>/
 
 `metadata-latest.json`/Markdown là bản gần nhất, không thay thế toàn bộ thư mục run. Header đã nhận có thể được giữ ngay cả khi validation tiếp theo lỗi, để chẩn đoán chính xác; snapshot không phải chứng nhận dữ liệu hợp lệ. File bị lỗi trước khi nhận xong không được lưu giả như đã hoàn thành.
 
+Report chứa config và tham chiếu catalogue JSONL của cùng run, kèm số byte/SHA-256 và coverage. [Architecture mapper](ARCHITECTURE-MAPPER.md) đọc config trong report, kiểm tra digest catalogue, model/revision và coverage trước khi đánh giá cấu trúc; không tìm mảng tensor nhúng trong JSON report và không fallback sang manifest baseline. Report cũ thiếu bằng chứng cần được tạo lại bằng `metadata-check` (có thể replay snapshot offline).
+
 Snapshot ghi SHA-256/số byte của từng JSON và prefix/header. Replay từ thư mục evidence:
 
 ```powershell
@@ -112,13 +114,13 @@ Replay không khởi tạo HTTP source, xác minh lại hash/schema/index/header
 
 Khi gửi report, gửi ZIP cả thư mục `reports/metadata/<run-id>/` cùng log test. Đây là metadata/cấu trúc tensor, không phải trọng số model.
 
-## Kiểm chứng bản vá
+## Bằng chứng lịch sử bản 0.7.0
 
-87 test mới kiểm tra transport, schema, snapshot, workflow, CLI và hợp đồng launcher Windows bằng test double. Toàn suite tại Linux: **453 phát hiện, 427 đạt, 26 bỏ qua**; [log](verification/unit-tests-linux-v0.7.1.txt). Môi trường hiện tại NumPy 2.3.5, safetensors 0.7.1, Torch 2.10.0+cpu, không có Transformers; không thay lock vì khác biệt đó. Cũng chạy riêng 87 test metadata với `python -S` (không nạp site-packages): **87 đạt, không bỏ qua**; [log standard library](verification/metadata-stdlib-tests-linux-v0.7.1.txt). Test mới metadata không cần các package này.
+87 test mới kiểm tra transport, schema, snapshot, workflow, CLI và hợp đồng launcher Windows bằng test double. Toàn suite tại Linux: **453 phát hiện, 427 đạt, 26 bỏ qua**; [log](verification/unit-tests-linux-v0.7.0.txt). Môi trường lần chạy đó có NumPy 2.3.5, safetensors 0.7.0, Torch 2.10.0+cpu, không có Transformers; không thay lock vì khác biệt đó. Cũng chạy riêng 87 test metadata với `python -S` (không nạp site-packages): **87 đạt, không bỏ qua**; [log standard library](verification/metadata-stdlib-tests-linux-v0.7.0.txt). Test mới metadata không cần các package này. Phiên bản safetensors được khôi phục theo source tài liệu tại commit `31aa10d`; đây là phiên bản dependency lịch sử, không phải phiên bản project hiện tại.
 
 Parser header mới dùng lại nguyên các kiểm tra cũ; toàn bộ test reader/block/sharded/decoder hiện hữu trong suite được chạy theo khả năng môi trường. Không chạy lại live Windows Job Object, CUDA, MSVC DLL hoặc Transformers đúng revision ở đây. Test launcher dùng policy giả lập chỉ chứng minh cách gọi; không tính là policy Windows mới đã được nghiệm thu.
 
-[Invariant file](verification/metadata-release-invariants-v0.7.1.json) ghi hash các config, lock, kernel, graph, reader index và FP8 adapter không đổi. Project Python/C không có .NET AssemblyVersion; version được tăng đồng bộ ở `pyproject.toml` và `glm_local.__version__` thành 0.7.1. Native ABI không đổi.
+[Invariant file bản 0.7.0](verification/metadata-release-invariants-v0.7.0.json) ghi hash các config, lock, kernel, graph, reader index và FP8 adapter của lần kiểm chứng đó. Không đổi tên hoặc nội dung bằng chứng cũ khi tăng version. Project Python/C không có .NET AssemblyVersion; version hiện tại được đồng bộ ở `pyproject.toml` và `glm_local.__version__` thành 0.8.1. Native ABI không đổi.
 
 ## Bước sau khi có metadata thật
 
@@ -133,5 +135,6 @@ feat(metadata): add bounded checkpoint header audit and offline replay
 Nguồn định dạng/giao thức: [Hugging Face metadata parsing](https://huggingface.co/docs/safetensors/metadata_parsing), [safetensors format](https://github.com/safetensors/safetensors#format), [RFC 9110 HTTP Range](https://www.rfc-editor.org/rfc/rfc9110.html#name-range), [Transformers fine-grained FP8](https://huggingface.co/docs/transformers/main/en/quantization/finegrained_fp8). Tài liệu nhánh main không phải bằng chứng tên/shape của checkpoint revision đã ghim; audit cần dữ liệu thực từ revision đó.
 
 
-## 0.7.1
-Total size validation is now diagnostic/report-only; architecture mapping remains pending.
+## Sửa lỗi ở bản 0.8.1
+
+Khôi phục `total_size` thành điều kiện xác minh cấu trúc, nối catalogue JSONL vào architecture-check và giữ các kết luận metadata tách khỏi khả năng suy luận checkpoint. Bản 0.8.1 đồng thời bổ sung kiểm tra tính nhất quán version và đường dẫn tới bằng chứng lịch sử; các log v0.7.0 ở trên giữ nguyên phạm vi ban đầu.

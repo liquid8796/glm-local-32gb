@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from glm_local import __main__ as cli
+from glm_local import __version__
 from glm_local import checkpoint_check as check
 from glm_local import checkpoint_worker as worker
 from glm_local.checkpoint_http import HttpMetadataSource, MetadataError
@@ -51,6 +52,13 @@ class MetadataWorkflowTests(unittest.TestCase):
                       "full_model_loaded", "payload_values_verified", "gpu_used", "full_model_limits_verified"):
             self.assertFalse(report[field], field)
         self.assertEqual(report["io"]["tensor_payload_bytes_requested"], 0)
+        accounting = report["tensor_payload_accounting"]
+        self.assertEqual(accounting["validation_mode"], "strict_exact_total_after_all_headers")
+        self.assertEqual(accounting["validation_status"], "verified")
+        self.assertTrue(accounting["exact_match"])
+        self.assertTrue(accounting["complete"])
+        self.assertEqual(accounting["observed_minus_declared_bytes"], 0)
+        self.assertEqual(report["observed_tensor_payload_bytes"], report["declared_tensor_payload_bytes"])
 
     def test_strict_http_transport_wired_through_complete_metadata_workflow(self):
         responses = [Response(encode(self.data[k]), headers={"Content-Length": len(encode(self.data[k]))})
@@ -75,6 +83,32 @@ class MetadataWorkflowTests(unittest.TestCase):
         self.assertEqual(len(source.calls), 4)
         self.assertFalse(report["tensor_review"]["fp8_adapter_metadata_verified"])
         self.assertEqual(report["tensor_review"]["fp8_pairs"]["deferred_scale_headers"], 1)
+        accounting = report["tensor_payload_accounting"]
+        self.assertEqual(accounting["validation_status"], "deferred")
+        self.assertFalse(accounting["complete"])
+        self.assertFalse(accounting["exact_match"])
+        self.assertLess(accounting["observed_minus_declared_bytes"], 0)
+
+    def test_partial_payload_equality_does_not_claim_complete_verification(self):
+        source = MemorySource(self.data)
+        first = sorted(source.data["headers"])[0]
+        raw, size = source.data["headers"][first]
+        source.data["index"]["metadata"]["total_size"] = size - len(raw)
+        report, code, _ = self.run_audit(source, {**self.parameters, "max_shards": 1})
+        self.assertEqual((code, report["status"]), (2, "PARTIAL"))
+        self.assertFalse(report["metadata_structure_verified"])
+        accounting = report["tensor_payload_accounting"]
+        self.assertTrue(accounting["exact_match"])
+        self.assertFalse(accounting["complete"])
+        self.assertEqual(accounting["validation_status"], "deferred")
+
+    def test_partial_payload_under_declared_total_defers_final_equality(self):
+        source = MemorySource(self.data)
+        source.data["index"]["metadata"]["total_size"] += 1
+        report, code, _ = self.run_audit(source, {**self.parameters, "max_shards": 1})
+        self.assertEqual((code, report["status"]), (2, "PARTIAL"))
+        self.assertNotIn("error", report)
+        self.assertEqual(report["tensor_payload_accounting"]["validation_status"], "deferred")
 
     def test_offline_replay_matches_catalogue_and_does_not_access_network(self):
         online, _, directory = self.run_audit()
@@ -132,12 +166,47 @@ class MetadataWorkflowTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertFalse(report["metadata_structure_verified"])
         self.assertIn("total_size", report["error"])
+        self.assertEqual(report["stage"], "validate_payload_accounting")
+        self.assertTrue(report["coverage"]["complete"])
+        self.assertEqual(report["headers_checked"], 2)
+        accounting = report["tensor_payload_accounting"]
+        self.assertTrue(accounting["complete"])
+        self.assertFalse(accounting["exact_match"])
+        self.assertEqual(accounting["validation_status"], "error")
+        self.assertEqual(accounting["observed_minus_declared_bytes"], -1)
+        self.assertNotIn("tensor_review", report)
+
+    def test_zero_payload_empty_tensor_satisfies_accounting_without_fp8_claim(self):
+        data = deepcopy(self.data)
+        filename = "model-00001-of-00001.safetensors"
+        raw, size, payload = make_header([("empty", "F32", [0, 3])])
+        data["headers"] = {filename: (raw, size)}
+        data["model"]["siblings"] = [{"rfilename": filename, "size": size}]
+        data["index"] = {"metadata": {"total_size": payload}, "weight_map": {"empty": filename}}
+        data["expected"]["weights"] = [{"name": filename, "bytes": size}]
+        write_json(self.root / "docs" / "model-metadata.json", data["expected"])
+        report, code, _ = self.run_audit(MemorySource(data))
+        self.assertEqual((code, report["status"]), (3, "REVIEW_REQUIRED"))
+        self.assertTrue(report["metadata_structure_verified"])
+        self.assertEqual(report["observed_tensor_payload_bytes"], 0)
+        self.assertEqual(report["declared_tensor_payload_bytes"], 0)
+        self.assertEqual(report["tensor_payload_accounting"]["validation_status"], "verified")
+        self.assertTrue(report["tensor_payload_accounting"]["exact_match"])
+        self.assertFalse(report["tensor_review"]["fp8_adapter_metadata_verified"])
+        self.assertIn("NO_FP8_WEIGHTS_OBSERVED", report["tensor_review"]["findings"]["by_code"])
 
     def test_observed_payload_cannot_exceed_index_even_during_partial_read(self):
         source = MemorySource(self.data); source.data["index"]["metadata"]["total_size"] = 1
         report, code, _ = self.run_audit(source, {**self.parameters, "max_shards": 1})
         self.assertEqual(code, 1)
         self.assertIn("already exceed", report["error"])
+        self.assertFalse(report["metadata_structure_verified"])
+        self.assertEqual(report["headers_checked"], 1)
+        accounting = report["tensor_payload_accounting"]
+        self.assertEqual(accounting["validation_status"], "error")
+        self.assertFalse(accounting["complete"])
+        self.assertGreater(accounting["observed_minus_declared_bytes"], 0)
+        self.assertGreater(report["observed_tensor_payload_bytes"], report["declared_tensor_payload_bytes"])
 
     def test_config_mismatch_is_review_required_not_schema_or_runtime_pass(self):
         source = MemorySource(self.data); source.data["config"]["hidden_size"] = 258
@@ -197,6 +266,24 @@ class MetadataWorkflowTests(unittest.TestCase):
         self.assertIn("Real checkpoint runtime compatible: **False**", text)
         self.assertNotIn('"checked_shard_names"', text)
         self.assertIn("Tensor review", text)
+        self.assertIn("Tensor payload accounting", text)
+        self.assertIn('"validation_status": "verified"', text)
+
+    def test_render_retains_payload_accounting_on_both_mismatch_errors(self):
+        for delta in (-1, 1):
+            with self.subTest(delta=delta):
+                source = MemorySource(self.data)
+                source.data["index"]["metadata"]["total_size"] += delta
+                report, code, _ = self.run_audit(source)
+                self.assertEqual(code, 1)
+                text = check.render_metadata(report)
+                self.assertIn("Status: **ERROR**", text)
+                self.assertIn("Metadata structure verified: **False**", text)
+                self.assertIn("Tensor payload accounting", text)
+                self.assertIn('"validation_status": "error"', text)
+                self.assertIn(f'"observed_minus_declared_bytes": {-delta}', text)
+                self.assertIn('"exact_match": false', text)
+                self.assertNotIn("shared/tied", text)
 
     def test_linux_launch_does_not_claim_windows_policy_and_publishes_latest(self):
         with patch.object(check.sys, "platform", "linux"), \
@@ -206,7 +293,7 @@ class MetadataWorkflowTests(unittest.TestCase):
         latest = json.loads((self.root / "reports" / "metadata-latest.json").read_text())
         self.assertEqual(code, 0)
         self.assertFalse(latest["job_policy_verified"])
-        self.assertEqual(latest["tool_version"], "0.7.0")
+        self.assertEqual(latest["tool_version"], __version__)
         self.assertEqual(latest, json.loads((Path(latest["run_directory"]) / "result.json").read_text()))
 
     def test_windows_launcher_passes_unchanged_job_limits_before_worker(self):

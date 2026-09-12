@@ -59,6 +59,25 @@ def _file_digest(path):
     return {"name": path.name, "bytes": count, "sha256": result.hexdigest()}
 
 
+def _record_payload_accounting(report, declared, observed, *, complete):
+    """Retain accounting evidence even when its validation immediately fails."""
+    invalid = observed > declared or (complete and observed != declared)
+    report["tensor_payload_accounting"] = {
+        "declared_index_total_size": declared,
+        "referenced_header_payload_bytes": observed,
+        "observed_minus_declared_bytes": observed - declared,
+        "exact_match": observed == declared,
+        "complete": complete,
+        "validation_mode": "strict_exact_total_after_all_headers",
+        "validation_status": "error" if invalid else "verified" if complete else "deferred",
+        "note": ("This supported index profile requires the sum of indexed header tensor bytes "
+                 "to equal metadata.total_size after all shard headers are checked. "
+                 "Partial runs enforce only the upper bound; equality is deferred.")
+    }
+    report["observed_tensor_payload_bytes"] = observed  # Described bytes, NOT fetched bytes.
+    report["declared_tensor_payload_bytes"] = declared
+
+
 def execute_metadata(root, settings, parameters, directory, *, source=None):
     """Run bounded inspection; source injection is used by offline unit tests."""
     report = initial_report(settings, parameters)
@@ -110,6 +129,8 @@ def execute_metadata(root, settings, parameters, directory, *, source=None):
                               "checked_shards": 0, "total_index_tensors": len(mapping),
                               "checked_tensors": 0, "complete": False}
         payload_bytes = 0
+        declared_payload = documents["index"]["metadata"]["total_size"]
+        _record_payload_accounting(report, declared_payload, payload_bytes, complete=False)
         for number, filename in enumerate(selected, 1):
             report["stage"], report["active_shard"] = "fetch_header", filename
             raw = source.header_bytes(filename, sizes[filename])
@@ -120,28 +141,27 @@ def execute_metadata(root, settings, parameters, directory, *, source=None):
                 raise MetadataError(f"Index/header tensor set mismatch in {filename}")
             tensors.update(header_tensors)
             payload_bytes += sum(t.nbytes for t in header_tensors.values())
-            if payload_bytes > documents["index"]["metadata"]["total_size"]:
-                raise MetadataError("Observed header payload bytes already exceed index total_size")
             checked.append(filename)
             report["headers_checked"] = number
-            report["coverage"].update(checked_shards=number, checked_tensors=len(tensors))
+            complete = len(checked) == len(by_shard)
+            report["coverage"].update(checked_shards=number, checked_tensors=len(tensors),
+                                      complete=complete, checked_shard_names=list(checked),
+                                      uninspected_shards=sorted(set(by_shard) - set(checked)))
+            _record_payload_accounting(report, declared_payload, payload_bytes, complete=complete)
+            report["stage"] = "validate_payload_accounting"
+            if payload_bytes > declared_payload:
+                raise MetadataError("Observed header payload bytes already exceed index total_size")
             if number == 1 or number % 16 == 0 or number == len(selected):
                 print(f"Metadata headers: {number}/{len(selected)} selected, {len(by_shard)} total shards", flush=True)
         report.pop("active_shard", None)
         complete = len(checked) == len(by_shard)
-        declared_payload = documents["index"]["metadata"].get("total_size")
-        report["tensor_payload_accounting"] = {
-            "declared_index_total_size": declared_payload,
-            "referenced_header_payload_bytes": payload_bytes,
-            "exact_match": payload_bytes == declared_payload,
-            "validation_mode": "report_only",
-            "note": "Safetensors index total_size is logical tensor size; header accounting may differ for shared/tied references."
-        }
+        _record_payload_accounting(report, declared_payload, payload_bytes, complete=complete)
         report["coverage"].update(complete=complete, checked_shard_names=checked,
                                   uninspected_shards=sorted(set(by_shard) - set(checked)))
+        report["stage"] = "validate_payload_accounting"
+        if complete and payload_bytes != declared_payload:
+            raise MetadataError("Complete header payload bytes do not equal index total_size")
         report["metadata_structure_verified"] = complete
-        report["observed_tensor_payload_bytes"] = payload_bytes  # Described bytes, NOT fetched bytes.
-        report["declared_tensor_payload_bytes"] = documents["index"]["metadata"]["total_size"]
         report["stage"] = "review_tensor_metadata"
         catalogue = directory / "tensor-catalogue.jsonl"
         report["tensor_review"] = review_tensors(tensors, mapping, documents["config"],
@@ -177,6 +197,7 @@ def render_metadata(report):
     if report.get("error"):
         lines += ["## Error", "", report["error"], ""]
     for title, key in (("Coverage", "coverage"), ("Metadata I/O", "io"),
+                       ("Tensor payload accounting", "tensor_payload_accounting"),
                        ("Baseline comparison", "baseline_comparison"),
                        ("Current runtime index policy", "runtime_index_policy")):
         if key in report:

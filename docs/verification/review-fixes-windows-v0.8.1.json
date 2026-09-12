@@ -1,0 +1,74 @@
+{
+  "release": "0.8.1",
+  "checked_at": "2026-09-12T10:03:18.909391+00:00",
+  "reviewed_head": "dac77d7",
+  "unit_tests": {
+    "command": "test-reference.bat",
+    "run": 513,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "official_hybrid_sharded_parity": {
+    "status": "PASS",
+    "exit_code": 0,
+    "report": "D:\\Project\\llm\\glm-local-32gb\\reports\\parity\\fix-review-5dbf612da8b2\\result.json",
+    "tool_version": "0.8.1",
+    "cases": [
+      {
+        "prompt_length": 8,
+        "processed_tokens": 16,
+        "passed": true,
+        "max_logit_error": 1.1920928955078125e-07,
+        "max_hidden_error": 3.4225684508726317e-07,
+        "greedy_ids_match": true
+      },
+      {
+        "prompt_length": 32,
+        "processed_tokens": 40,
+        "passed": true,
+        "max_logit_error": 1.4901161193847656e-07,
+        "max_hidden_error": 4.172348768705092e-07,
+        "greedy_ids_match": true
+      },
+      {
+        "prompt_length": 120,
+        "processed_tokens": 128,
+        "passed": true,
+        "max_logit_error": 2.384185791015625e-07,
+        "max_hidden_error": 3.8375246114163986e-07,
+        "greedy_ids_match": true
+      }
+    ],
+    "peak_open_shards": 2,
+    "error": null
+  },
+  "synthetic_metadata_pipeline": {
+    "scope": "synthetic header-only regression; no remote checkpoint data",
+    "runs": [
+      {
+        "case": "valid",
+        "source_mode": "synthetic_test",
+        "metadata_status": "PASS",
+        "metadata_exit_code": 0,
+        "architecture_status": "PASS",
+        "catalogue_records": 64,
+        "metadata_mapping_verified": true,
+        "real_checkpoint_compatible": false
+      },
+      {
+        "case": "bad-total",
+        "source_mode": "synthetic_test",
+        "metadata_status": "ERROR",
+        "metadata_exit_code": 1,
+        "architecture_status": "ERROR",
+        "catalogue_records": null,
+        "metadata_mapping_verified": false,
+        "real_checkpoint_compatible": false
+      }
+    ],
+    "evidence_root": "D:\\Project\\llm\\glm-local-32gb\\reports\\review-fixes\\d738284a13fb"
+  },
+  "full_model_inference_verified": false,
+  "remote_checkpoint_payload_fetched": false
+}

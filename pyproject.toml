@@ -1,6 +1,6 @@
 [project]
 name = "glm-local-32gb"
-version = "0.7.0"
+version = "0.7.1"
 description = "Synthetic decoder parity and bounded safetensors FP8 block validation"
 requires-python = ">=3.10"
 dependencies = []

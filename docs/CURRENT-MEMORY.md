@@ -1,6 +1,6 @@
 # Current Memory Snapshot — GLM Local 32GB
 
-Cập nhật: 2026-09-12. Baseline: **0.6.1**, đã được người dùng kiểm chứng trên Windows bằng `reports(2).zip`. Bản bàn giao hiện tại: **0.7.0**. Snapshot này ghi lại trạng thái dự án và phạm vi bằng chứng, không phải bản xuất đầy đủ mọi hội thoại.
+Cập nhật: 2026-09-12. Baseline: **0.6.1**, đã được người dùng kiểm chứng trên Windows bằng `reports(2).zip`. Bản bàn giao hiện tại: **0.7.1**. Snapshot này ghi lại trạng thái dự án và phạm vi bằng chứng, không phải bản xuất đầy đủ mọi hội thoại.
 
 ## Mục tiêu và quyết định giữ nguyên
 
@@ -8,7 +8,7 @@ Checkpoint trong `config/local.json`: `dealignai/GLM-5.3-CYBERSECURITY-FP8`, rev
 
 Máy mục tiêu theo tài liệu và report người dùng: Windows x64, i7-11800H, NVIDIA GeForce RTX 3070 Laptop GPU 8 GiB. CPU hard cap 70% bằng Windows Job Object; committed-memory limit 32.000.000.000 byte; GPU pacing target 0,6 trong cửa sổ 10 giây. Committed memory không phải RAM vật lý toàn máy; pacing target không phải bằng chứng đã giữ trần GPU 60%.
 
-Giữ nguyên `config/local.json`, `config/reference-lock.json`, `requirements-reference.lock.txt`, kernel C/PTX, graph miniature, oracle chính thức, adapter FP8 và reader nhiều shard. `doctor` vẫn BLOCKED; chưa có inference checkpoint đầy đủ hoặc lệnh chat. Version Python package và `glm_local.__version__` cùng **0.7.0**. Project Python/C không có .NET AssemblyVersion; native ABI không đổi.
+Giữ nguyên `config/local.json`, `config/reference-lock.json`, `requirements-reference.lock.txt`, kernel C/PTX, graph miniature, oracle chính thức, adapter FP8 và reader nhiều shard. `doctor` vẫn BLOCKED; chưa có inference checkpoint đầy đủ hoặc lệnh chat. Version Python package và `glm_local.__version__` cùng **0.7.1**. Project Python/C không có .NET AssemblyVersion; native ABI không đổi.
 
 ## Mốc 0.6.1 đã đóng: Windows miniature hybrid parity
 
@@ -21,9 +21,9 @@ Report Windows `reports(2).zip` đã được review ở lượt trước:
 - Safetensors **0.8.0 thật**, `serializer_api=TensorSpec`; 80 tensor/four shards, 34 cặp weight/scale khác shard; tối đa hai shard mở đồng thời.
 - Hybrid thực dùng RTX 3070 Laptop nhưng **chỉ output head lên GPU**, không phải toàn bộ decoder. Policy Windows được xác nhận cài; full-model/inference/GPU-cap flags vẫn false.
 
-Đây là bằng chứng lịch sử từ máy người dùng, **không phải chạy lại Windows cho 0.7.0**. Bản ghi nghiệm thu được giữ trong `docs/verification/windows-acceptance-v0.6.1.md`. Không quay lại sửa serializer/reader từ đầu hoặc bắt chạy lại ba lệnh cũ để đóng mốc này.
+Đây là bằng chứng lịch sử từ máy người dùng, **không phải chạy lại Windows cho 0.7.1**. Bản ghi nghiệm thu được giữ trong `docs/verification/windows-acceptance-v0.6.1.md`. Không quay lại sửa serializer/reader từ đầu hoặc bắt chạy lại ba lệnh cũ để đóng mốc này.
 
-## Đã thực hiện trong 0.7.0
+## Đã thực hiện trong 0.7.1
 
 Thêm `metadata-check` để kiểm tra config, index và header tensor **đúng revision ghim**, không tải toàn bộ shard hay đọc giá trị trọng số:
 
@@ -39,24 +39,24 @@ Metadata index có cap riêng 32 MiB/262.144 tensor cho việc kiểm tra; **run
 
 Status: `PASS` (0) chỉ là các kiểm tra metadata đã triển khai đạt và đủ coverage; `PARTIAL` (2) chưa đủ header; `REVIEW_REQUIRED` (3) cần đối chiếu baseline/tensor profile; `ERROR` (1) lỗi giao thức/dữ liệu/quota; `INTERRUPTED` (130) bị ngắt. `architecture_mapping_verified`, `real_checkpoint_compatible`, `inference_verified`, `full_model_loaded`, `payload_values_verified` vẫn **false**, kể cả metadata PASS.
 
-## Kiểm thử và giới hạn bằng chứng 0.7.0
+## Kiểm thử và giới hạn bằng chứng 0.7.1
 
-Linux unit suite: **453 test được phát hiện, 427 đạt, 26 bỏ qua**, gồm **87 test mới** cho HTTP/header/schema/snapshot/orchestration. Log: `docs/verification/unit-tests-linux-v0.7.0.txt`. Safetensors môi trường này là 0.7.0, không có Transformers; không sửa dependency lock theo môi trường này.
+Linux unit suite: **453 test được phát hiện, 427 đạt, 26 bỏ qua**, gồm **87 test mới** cho HTTP/header/schema/snapshot/orchestration. Log: `docs/verification/unit-tests-linux-v0.7.1.txt`. Safetensors môi trường này là 0.7.1, không có Transformers; không sửa dependency lock theo môi trường này.
 
-Chạy riêng 87 test metadata với `python -S` (không nạp site-packages): **87 đạt, không bỏ qua**; log `docs/verification/metadata-stdlib-tests-linux-v0.7.0.txt`.
+Chạy riêng 87 test metadata với `python -S` (không nạp site-packages): **87 đạt, không bỏ qua**; log `docs/verification/metadata-stdlib-tests-linux-v0.7.1.txt`.
 
-Test mới kiểm tra Range bị bỏ qua, response/body/budget sai, revision sai, shard/index mismatch, cross-shard scale, BF16 scale, unknown mapping, snapshot đổi dữ liệu/liên kết, offline replay và report lỗi. End-to-end HTTP sử dụng phản hồi giả lập; kiểm tra launcher Windows dùng test double. **Chưa chạy mới Windows/MSVC/CUDA/Transformers đúng revision cho 0.7.0.** Test bỏ qua không tính là đạt.
+Test mới kiểm tra Range bị bỏ qua, response/body/budget sai, revision sai, shard/index mismatch, cross-shard scale, BF16 scale, unknown mapping, snapshot đổi dữ liệu/liên kết, offline replay và report lỗi. End-to-end HTTP sử dụng phản hồi giả lập; kiểm tra launcher Windows dùng test double. **Chưa chạy mới Windows/MSVC/CUDA/Transformers đúng revision cho 0.7.1.** Test bỏ qua không tính là đạt.
 
-Đã thử thật `python -m glm_local metadata-check --max-shards 1` tại đây: **ERROR ở `fetch_model` do không phân giải DNS Hugging Face**, 1 request thử, **0 byte body đã đọc, 0 Range request**. Xem `docs/verification/metadata-online-attempt-linux-v0.7.0.json` và `.txt`. Không thu được config/index/header checkpoint thật; không dùng model card/main branch hoặc fixture giả lập để điền thay bằng chứng.
+Đã thử thật `python -m glm_local metadata-check --max-shards 1` tại đây: **ERROR ở `fetch_model` do không phân giải DNS Hugging Face**, 1 request thử, **0 byte body đã đọc, 0 Range request**. Xem `docs/verification/metadata-online-attempt-linux-v0.7.1.json` và `.txt`. Không thu được config/index/header checkpoint thật; không dùng model card/main branch hoặc fixture giả lập để điền thay bằng chứng.
 
-`docs/verification/metadata-release-invariants-v0.7.0.json` ghi các hash file cấu hình/lock/kernel/graph/oracle/reader/adapter được giữ nguyên so với baseline 0.6.1.
+`docs/verification/metadata-release-invariants-v0.7.1.json` ghi các hash file cấu hình/lock/kernel/graph/oracle/reader/adapter được giữ nguyên so với baseline 0.6.1.
 
 ## Việc cần tiếp tục ngay trên máy người dùng
 
-Áp dụng source **0.7.0**, giữ `.venv-reference`, `build` và report cũ. Không cần build lại DLL, cài thêm thư viện hoặc hạ safetensors cho tính năng metadata mới.
+Áp dụng source **0.7.1**, giữ `.venv-reference`, `build` và report cũ. Không cần build lại DLL, cài thêm thư viện hoặc hạ safetensors cho tính năng metadata mới.
 
 ```powershell
-.\test-reference.bat 2>&1 | Tee-Object -FilePath .\reports\test-reference-v0.7.0.log
+.\test-reference.bat 2>&1 | Tee-Object -FilePath .\reports\test-reference-v0.7.1.log
 .\glm.bat metadata-check
 ```
 
@@ -75,3 +75,7 @@ feat(metadata): add bounded checkpoint header audit and offline replay
 ```
 
 Tài liệu chính: `docs/CHECKPOINT-METADATA.md`; lịch sử: `docs/SHARDED-DECODER.md`, `docs/SAFETENSORS.md`, `docs/BACKEND.md`, `docs/OFFICIAL-PARITY.md`.
+
+
+## 0.7.1 metadata validation fix
+Relaxed strict index total_size equality. Added tensor payload accounting report because safetensors logical size may differ from direct header aggregation due to shared/tied references. No payload is downloaded.

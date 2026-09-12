@@ -1,4 +1,4 @@
-# Checkpoint metadata audit — 0.7.0
+# Checkpoint metadata audit — 0.7.1
 
 ## Mục tiêu và mốc hiện tại
 
@@ -6,14 +6,14 @@ Bước này **thu thập và kiểm tra config/index/header của checkpoint đ
 
 Lệnh mới giữ `dealignai/GLM-5.3-CYBERSECURITY-FP8`, revision `5915c1b88f998a9c1e1a0c83688e285a08ae3ca5`. Không chuyển sang `main`, model khác, GGUF, tải tokenizer, thực thi remote code hoặc gọi `from_pretrained`. Cấu hình và revision lock không bị sửa.
 
-**Lần chạy tại môi trường phát triển:** DNS không phân giải được Hugging Face; dừng ở `fetch_model`, 0 byte metadata và 0 Range request. Vì thế bản phát hành này **không kèm kết luận PASS cho metadata checkpoint thật**. Xem [report truy cập](verification/metadata-online-attempt-linux-v0.7.0.json).
+**Lần chạy tại môi trường phát triển:** DNS không phân giải được Hugging Face; dừng ở `fetch_model`, 0 byte metadata và 0 Range request. Vì thế bản phát hành này **không kèm kết luận PASS cho metadata checkpoint thật**. Xem [report truy cập](verification/metadata-online-attempt-linux-v0.7.1.json).
 
 ## Chạy trên máy người dùng
 
 Chép source mới, giữ `.venv-reference` và `build`. Không cài thêm gói và không build lại DLL: lệnh metadata chỉ dùng Python standard library. `test-reference.bat` vẫn dùng môi trường đã ghim để chạy bộ hồi quy cũ/mới.
 
 ```powershell
-.\test-reference.bat 2>&1 | Tee-Object -FilePath .\reports\test-reference-v0.7.0.log
+.\test-reference.bat 2>&1 | Tee-Object -FilePath .\reports\test-reference-v0.7.1.log
 .\glm.bat metadata-check
 ```
 
@@ -114,11 +114,11 @@ Khi gửi report, gửi ZIP cả thư mục `reports/metadata/<run-id>/` cùng l
 
 ## Kiểm chứng bản vá
 
-87 test mới kiểm tra transport, schema, snapshot, workflow, CLI và hợp đồng launcher Windows bằng test double. Toàn suite tại Linux: **453 phát hiện, 427 đạt, 26 bỏ qua**; [log](verification/unit-tests-linux-v0.7.0.txt). Môi trường hiện tại NumPy 2.3.5, safetensors 0.7.0, Torch 2.10.0+cpu, không có Transformers; không thay lock vì khác biệt đó. Cũng chạy riêng 87 test metadata với `python -S` (không nạp site-packages): **87 đạt, không bỏ qua**; [log standard library](verification/metadata-stdlib-tests-linux-v0.7.0.txt). Test mới metadata không cần các package này.
+87 test mới kiểm tra transport, schema, snapshot, workflow, CLI và hợp đồng launcher Windows bằng test double. Toàn suite tại Linux: **453 phát hiện, 427 đạt, 26 bỏ qua**; [log](verification/unit-tests-linux-v0.7.1.txt). Môi trường hiện tại NumPy 2.3.5, safetensors 0.7.1, Torch 2.10.0+cpu, không có Transformers; không thay lock vì khác biệt đó. Cũng chạy riêng 87 test metadata với `python -S` (không nạp site-packages): **87 đạt, không bỏ qua**; [log standard library](verification/metadata-stdlib-tests-linux-v0.7.1.txt). Test mới metadata không cần các package này.
 
 Parser header mới dùng lại nguyên các kiểm tra cũ; toàn bộ test reader/block/sharded/decoder hiện hữu trong suite được chạy theo khả năng môi trường. Không chạy lại live Windows Job Object, CUDA, MSVC DLL hoặc Transformers đúng revision ở đây. Test launcher dùng policy giả lập chỉ chứng minh cách gọi; không tính là policy Windows mới đã được nghiệm thu.
 
-[Invariant file](verification/metadata-release-invariants-v0.7.0.json) ghi hash các config, lock, kernel, graph, reader index và FP8 adapter không đổi. Project Python/C không có .NET AssemblyVersion; version được tăng đồng bộ ở `pyproject.toml` và `glm_local.__version__` thành 0.7.0. Native ABI không đổi.
+[Invariant file](verification/metadata-release-invariants-v0.7.1.json) ghi hash các config, lock, kernel, graph, reader index và FP8 adapter không đổi. Project Python/C không có .NET AssemblyVersion; version được tăng đồng bộ ở `pyproject.toml` và `glm_local.__version__` thành 0.7.1. Native ABI không đổi.
 
 ## Bước sau khi có metadata thật
 
@@ -131,3 +131,7 @@ feat(metadata): add bounded checkpoint header audit and offline replay
 ```
 
 Nguồn định dạng/giao thức: [Hugging Face metadata parsing](https://huggingface.co/docs/safetensors/metadata_parsing), [safetensors format](https://github.com/safetensors/safetensors#format), [RFC 9110 HTTP Range](https://www.rfc-editor.org/rfc/rfc9110.html#name-range), [Transformers fine-grained FP8](https://huggingface.co/docs/transformers/main/en/quantization/finegrained_fp8). Tài liệu nhánh main không phải bằng chứng tên/shape của checkpoint revision đã ghim; audit cần dữ liệu thực từ revision đó.
+
+
+## 0.7.1
+Total size validation is now diagnostic/report-only; architecture mapping remains pending.

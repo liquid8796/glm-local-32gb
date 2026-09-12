@@ -1,77 +1,77 @@
 # Current Memory Snapshot — GLM Local 32GB
 
-Cập nhật: 2026-09-12. Baseline đang sửa: `glm-local-32gb-v0.6.0.zip`. Bản bàn giao hiện tại: **0.6.1**. Bản 0.6.0 trước đó phát triển từ ZIP 0.5.0. Snapshot này tổng hợp từ source, report người dùng và công việc đã kiểm chứng; không phải bản xuất đầy đủ mọi hội thoại trước đó.
+Cập nhật: 2026-09-12. Baseline: **0.6.1**, đã được người dùng kiểm chứng trên Windows bằng `reports(2).zip`. Bản bàn giao hiện tại: **0.7.0**. Snapshot này ghi lại trạng thái dự án và phạm vi bằng chứng, không phải bản xuất đầy đủ mọi hội thoại.
 
-## Mục tiêu và các quyết định giữ nguyên
+## Mục tiêu và quyết định giữ nguyên
 
-Project thử xây backend đọc/tính theo ngân sách cho checkpoint FP8 được ghi trong `config/local.json`: `dealignai/GLM-5.3-CYBERSECURITY-FP8`, revision `5915c1b88f998a9c1e1a0c83688e285a08ae3ca5`. Không đổi model, revision, định dạng FP8 hay tự chuyển GGUF.
+Checkpoint trong `config/local.json`: `dealignai/GLM-5.3-CYBERSECURITY-FP8`, revision `5915c1b88f998a9c1e1a0c83688e285a08ae3ca5`. Không đổi model, revision, định dạng FP8 hoặc chuyển GGUF để vượt kiểm thử. Không tải payload trọng số checkpoint trong bước metadata.
 
-Theo tài liệu baseline, máy mục tiêu chạy Windows x64, i7-11800H, RTX 3070 Laptop 8 GiB; đây là thông tin lịch sử trong README, không phải phép đo lại ở lần này. Giữ CPU hard cap 70% theo Windows Job Object, committed-memory budget 32.000.000.000 byte và GPU pacing target 0,6 trong cửa sổ 10 giây. Không đánh đồng commit cap với trần RAM vật lý toàn máy, hoặc target pacing với bằng chứng GPU thực giữ 60%.
+Máy mục tiêu theo tài liệu và report người dùng: Windows x64, i7-11800H, NVIDIA GeForce RTX 3070 Laptop GPU 8 GiB. CPU hard cap 70% bằng Windows Job Object; committed-memory limit 32.000.000.000 byte; GPU pacing target 0,6 trong cửa sổ 10 giây. Committed memory không phải RAM vật lý toàn máy; pacing target không phải bằng chứng đã giữ trần GPU 60%.
 
-Không sửa `config/local.json`, `config/reference-lock.json`, `requirements-reference.lock.txt`, graph miniature, kernel C/PTX hay source tham chiếu chính thức. Không tải checkpoint; không có inference full model hoặc lệnh chat.
+Giữ nguyên `config/local.json`, `config/reference-lock.json`, `requirements-reference.lock.txt`, kernel C/PTX, graph miniature, oracle chính thức, adapter FP8 và reader nhiều shard. `doctor` vẫn BLOCKED; chưa có inference checkpoint đầy đủ hoặc lệnh chat. Version Python package và `glm_local.__version__` cùng **0.7.0**. Project Python/C không có .NET AssemblyVersion; native ABI không đổi.
 
-## Trạng thái đã có trước khi tiếp tục
+## Mốc 0.6.1 đã đóng: Windows miniature hybrid parity
 
-Baseline có decoder giả lập hai layer, fixture FP8 private 9.440 byte, NumPy oracle độc lập, official Transformers parity, primitive C/CUDA, Windows Job Object, GPU pacing, reader safetensors đơn file và adapter FP8 block. Các kết quả Windows lịch sử được ghi trong README/docs; report chạy thực trên máy đó không nằm trong ZIP đầu vào.
+Các thay đổi 0.6.0 nối decoder hai layer vào fixture safetensors bốn shard. Bản 0.6.1 sửa exporter để dùng TensorSpec trên safetensors 0.8.0 và giữ buffer tồn tại khi serialize, đồng thời bổ sung chẩn đoán report.
 
-Điểm đang dở được ghi rõ cuối `docs/SAFETENSORS.md`: nối decoder thu nhỏ với safetensors chia nhiều shard và tiếp tục đối chiếu với oracle.
+Report Windows `reports(2).zip` đã được review ở lượt trước:
 
-## Đã thực hiện trong 0.6.0
+- `test-reference-v0.6.1.log`: **376 tests, OK**, không bỏ qua.
+- Bốn ca prompt + sinh thêm **8+4, 32+4, 64+4, 120+8** đều PASS; hidden states/logits trong tolerance, attention/expert selection và greedy token IDs khớp oracle Transformers độc lập.
+- Safetensors **0.8.0 thật**, `serializer_api=TensorSpec`; 80 tensor/four shards, 34 cặp weight/scale khác shard; tối đa hai shard mở đồng thời.
+- Hybrid thực dùng RTX 3070 Laptop nhưng **chỉ output head lên GPU**, không phải toàn bộ decoder. Policy Windows được xác nhận cài; full-model/inference/GPU-cap flags vẫn false.
 
-Thêm index reader nhiều shard với LRU, lazy payload reads, giới hạn số file mở, kiểm tra lại shard sau eviction và kiểm tra index/header. Thêm fixture bốn shard do serializer safetensors chính thức tạo: 80 tensor, 34 cặp weight/scale khác shard, 10.072 byte payload. Có adapter `MiniSafetensorWeights` cho decoder; oracle vẫn đọc fixture private gốc.
+Đây là bằng chứng lịch sử từ máy người dùng, **không phải chạy lại Windows cho 0.7.0**. Bản ghi nghiệm thu được giữ trong `docs/verification/windows-acceptance-v0.6.1.md`. Không quay lại sửa serializer/reader từ đầu hoặc bắt chạy lại ba lệnh cũ để đóng mốc này.
 
-Thêm `--storage private|safetensors` vào `mini` và `parity`; mặc định vẫn `private`. Có `mini-sharded.bat`, `parity-sharded.bat`, báo cáo storage và test mới. Không đổi quota, checkpoint, revision lock hoặc điều kiện `doctor BLOCKED`.
+## Đã thực hiện trong 0.7.0
 
-## Bằng chứng lịch sử 0.6.0 và phạm vi
+Thêm `metadata-check` để kiểm tra config, index và header tensor **đúng revision ghim**, không tải toàn bộ shard hay đọc giá trị trọng số:
 
-Linux unit suite: 347 test được phát hiện; **321 đạt, 26 bỏ qua**. Log ở `docs/verification/unit-tests-linux.txt`. Đã đối chiếu từng byte/dtype/shape của 80 tensor với `safe_open` chính thức.
+- `checkpoint_http.py`: client standard library; chỉ HTTPS Hugging Face/CDN, redirect bị giới hạn và không đọc body redirect; hai Range request cho prefix 8 byte và JSON header mỗi shard. Chặn HTTP 200 thay vì fallback tải cả shard; kiểm tra 206, Content-Range/Length, encoding, kích thước file và ETag khi có. Không đọc token/cache thông tin đăng nhập.
+- `checkpoint_schema.py`: kiểm tra manifest/config/index/header, dtype/shape/offset, cặp FP8 `_scale_inv`, grid 128x128; catalogue giữ mọi tensor quan sát được và báo riêng tên chưa nhận diện, scale BF16 chưa được adapter hỗ trợ, tensor ngoài mapping/shape đã biết. Không mặc nhiên gán full architecture mapping hoặc tương thích runtime.
+- `checkpoint_snapshot.py`: lưu model/config/index và prefix+header dưới `evidence/`, kèm SHA-256/length; `--offline` kiểm tra lại dữ liệu đã lưu, không truy cập mạng. Snapshot chỉ bảo đảm nhất quán dữ liệu lưu cục bộ, không phải chữ ký xác thực checkpoint.
+- `checkpoint_check.py`, `checkpoint_worker.py`, CLI và `metadata-check.bat`: báo cáo per-run + latest, status/exit code, coverage, stage/lỗi, counter, catalogue. Windows launcher cài Job Object trước khi worker chạy; không gọi GPU/Torch/Transformers cho bước metadata.
+- Tách `parse_header_bytes()` từ reader đơn file để tái sử dụng đúng bộ kiểm tra; không thay đường đọc payload hoặc nới runtime reader limits.
 
-Kernel C CPU nguyên trạng đã build riêng bằng GCC và thử năm ca: seed 7 với 8+4, 32+4, 64+4, 120+8; seed 19 với 64+4. Native private/safetensors khớp chính xác logits, 12 hidden states/token và trace; khớp NumPy trong tolerance cùng ID greedy độc lập. Sai số logits lớn nhất khoảng 1,1466e-7. Report: `docs/verification/sharded-linux-cpu.json`.
+Giới hạn mặc định: budget đọc body metadata 64 MiB (CLI tối đa 128 MiB), header 1 MiB/shard, 512 shards, 64 KiB/lần đọc; cap JSON/index/request/redirect và thời gian được ghi đầy đủ trong `docs/CHECKPOINT-METADATA.md`. Counter body là byte code ứng dụng đọc, không phải giới hạn traffic/OS/TLS buffering.
 
-Chưa chạy lại Windows/MSVC/CUDA/Transformers đúng revision tại đây. Không coi test bỏ qua, test double hoặc C/GCC Linux là bằng chứng Windows/hybrid chính thức đã đạt.
+Metadata index có cap riêng 32 MiB/262.144 tensor cho việc kiểm tra; **runtime reader vẫn 1 MiB/8.192 tensor**. Report `runtime_index_policy` nêu khoảng cách đó; không tự nới runtime reader chỉ để đổi kết quả metadata.
 
-## Report Windows mới và bản sửa 0.6.1
+Status: `PASS` (0) chỉ là các kiểm tra metadata đã triển khai đạt và đủ coverage; `PARTIAL` (2) chưa đủ header; `REVIEW_REQUIRED` (3) cần đối chiếu baseline/tensor profile; `ERROR` (1) lỗi giao thức/dữ liệu/quota; `INTERRUPTED` (130) bị ngắt. `architecture_mapping_verified`, `real_checkpoint_compatible`, `inference_verified`, `full_model_loaded`, `payload_values_verified` vẫn **false**, kể cả metadata PASS.
 
-Người dùng gửi `reports(1).zip`: chỉ có `parity-latest.json` và Markdown, không có log unit test hoặc các thư mục report per-run. JSON gốc được lưu nguyên trạng trong `docs/verification/user-parity-error-v0.6.0.json`.
+## Kiểm thử và giới hạn bằng chứng 0.7.0
 
-Report: `status=ERROR`, `child_exit_code=1`, lỗi `TypeError: argument 'tensor_dict': 'dict' object is not an instance of 'TensorSpec'`. `job_policy_verified=true`, CPU hard cap 70%, committed-memory limit 32.000.000.000 byte, kill-on-close=true. Các cờ `synthetic_official_parity_verified`, `inference_verified`, `full_model_loaded` đều false. Không có cases hoặc version thư viện trong report; không suy diễn đã đạt CUDA/official parity.
+Linux unit suite: **453 test được phát hiện, 427 đạt, 26 bỏ qua**, gồm **87 test mới** cho HTTP/header/schema/snapshot/orchestration. Log: `docs/verification/unit-tests-linux-v0.7.0.txt`. Safetensors môi trường này là 0.7.0, không có Transformers; không sửa dependency lock theo môi trường này.
 
-Source 0.6.0 gọi serializer bằng raw dictionaries; requirements lock ghim safetensors 0.8.0, trong khi lần kiểm chứng Linux trước dùng 0.7.0. Đối chiếu source chính thức tag v0.8.0 xác nhận serializer yêu cầu TensorSpec và caller giữ buffer sống. Vị trí exporter nằm trước khởi tạo backend native/hybrid trong execute_parity, nên sửa exporter trước, chưa chuyển bước metadata checkpoint.
+Chạy riêng 87 test metadata với `python -S` (không nạp site-packages): **87 đạt, không bỏ qua**; log `docs/verification/metadata-stdlib-tests-linux-v0.7.0.txt`.
 
-Bản 0.6.1:
+Test mới kiểm tra Range bị bỏ qua, response/body/budget sai, revision sai, shard/index mismatch, cross-shard scale, BF16 scale, unknown mapping, snapshot đổi dữ liệu/liên kết, offline replay và report lỗi. End-to-end HTTP sử dụng phản hồi giả lập; kiểm tra launcher Windows dùng test double. **Chưa chạy mới Windows/MSVC/CUDA/Transformers đúng revision cho 0.7.0.** Test bỏ qua không tính là đạt.
 
-- Thêm `safetensor_serializer.py`: dùng TensorSpec nếu thư viện cung cấp, raw dictionary nếu không; giữ ctypes buffers tới khi serializer trả bytes, không retry TypeError, không đổi FP8 bytes, giới hạn payload helper 64 KiB mỗi lần.
-- `mini_safetensors.py` dùng helper và ghi `serializer_api` vào report fixture. Không đổi số shard/tensor, mapping/graph/kernel/reader, quota hoặc dependency/revision locks.
-- Report parity giữ tham số yêu cầu, version tool/worker và traceback lỗi giới hạn 16.000 ký tự, cả JSON và Markdown latest/per-run. Không đổi điều kiện PASS hoặc các cờ xác minh.
-- Version project và `glm_local.__version__` cùng **0.6.1**. Project này là Python/C, không có .NET AssemblyVersion; không tăng native ABI vì giao diện kernel không đổi.
-- README, BACKEND và SHARDED-DECODER đã cập nhật. Commit đề xuất: `fix(storage): support TensorSpec serialization and retain parity diagnostics`.
+Đã thử thật `python -m glm_local metadata-check --max-shards 1` tại đây: **ERROR ở `fetch_model` do không phân giải DNS Hugging Face**, 1 request thử, **0 byte body đã đọc, 0 Range request**. Xem `docs/verification/metadata-online-attempt-linux-v0.7.0.json` và `.txt`. Không thu được config/index/header checkpoint thật; không dùng model card/main branch hoặc fixture giả lập để điền thay bằng chứng.
 
-## Bằng chứng 0.6.1 và giới hạn còn lại
+`docs/verification/metadata-release-invariants-v0.7.0.json` ghi các hash file cấu hình/lock/kernel/graph/oracle/reader/adapter được giữ nguyên so với baseline 0.6.1.
 
-Linux unit suite: **366 test được phát hiện, 340 đạt, 26 bỏ qua**; 19 test mới. Log `docs/verification/unit-tests-linux-v0.6.1.txt`. Safetensors thực chạy tại đây là **0.7.0**, không có Transformers. Test round-trip và `safe_open` đối chiếu bytes/dtype/shape tiếp tục đạt; test mới kiểm tra buffer lifetime khi GC, empty/scalar, dữ liệu sai và việc giữ traceback/report.
+## Việc cần tiếp tục ngay trên máy người dùng
 
-`docs/verification/serializer-api-regression-v0.6.1.json` ghi phép kiểm tra tái hiện lỗi v0.6.0 và bản sửa qua **mô phỏng hợp đồng TensorSpec 0.8**, sử dụng thư viện thật hiện có để tạo/đọc bytes. Kết quả này **không phải** thực thi Rust extension safetensors 0.8.0. Không tải được wheel 0.8.0 vì môi trường không truy cập được máy chủ gói. Chưa chạy lại Windows/MSVC/CUDA hoặc Transformers đúng revision. Không gộp các test bỏ qua/historical report/test double thành nghiệm thu trên máy đích.
-
-## Việc cần tiếp tục ngay
-
-Áp dụng source **0.6.1** lên project hiện có, giữ `.venv-reference`, `build` và report cũ. Không cần downgrade safetensors hoặc build lại DLL cho bản sửa Python này.
-
-Kiểm tra serializer riêng trong môi trường đã ghim, không chạy GPU:
+Áp dụng source **0.7.0**, giữ `.venv-reference`, `build` và report cũ. Không cần build lại DLL, cài thêm thư viện hoặc hạ safetensors cho tính năng metadata mới.
 
 ```powershell
-.\.venv-reference\Scripts\python.exe -m unittest discover -s tests -p "test_safetensor_serializer.py" -v
+.\test-reference.bat 2>&1 | Tee-Object -FilePath .\reports\test-reference-v0.7.0.log
+.\glm.bat metadata-check
 ```
 
-Nếu đạt, chạy lần lượt; dừng khi lệnh báo lỗi:
+Dừng nếu unit test báo lỗi. `metadata-check` mặc định kiểm tra tất cả shard trong giới hạn; `--max-shards 3` chỉ là kiểm tra một phần, không thay cho full coverage. Cần Internet truy cập model công khai đã ghim; không đổi pin hoặc fallback tải payload khi lỗi.
 
-```powershell
-.\test-reference.bat 2>&1 | Tee-Object -FilePath .\reports\test-reference-v0.6.1.log
-.\glm.bat parity --storage safetensors --backend hybrid
-.\glm.bat parity --storage safetensors --backend hybrid --lengths 120 --generate 8
+Gửi ZIP log test và **toàn bộ** `reports/metadata/<run-id>/` gồm `result.json`, `result.md`, `tensor-catalogue.jsonl` và `evidence/`. Thư mục evidence cho phép đọc lại offline theo hướng dẫn trong `docs/CHECKPOINT-METADATA.md`; replay không phải tiếp tục tải online sau lỗi.
+
+## Bước sau khi có metadata thật
+
+Đọc coverage/status/findings/catalogue trước. Xác nhận cấu trúc thật, các tên/shape chưa mapping và giới hạn runtime/scale dtype. Chỉ sửa profile/mapping/reader khi có metadata làm căn cứ; không đổi baseline snapshot để ép PASS. Tiếp đó triển khai projection FP8 nhiều block và oracle độc lập, rồi mở rộng theo layer/expert dưới ngân sách. Chưa chuyển sang tải full checkpoint hay làm giao diện chat.
+
+Commit đề xuất:
+
+```text
+feat(metadata): add bounded checkpoint header audit and offline replay
 ```
 
-Xem `tool_version=0.6.1`, `parameters.storage`, `storage.exported_fixture.serializer_api=TensorSpec`, per-case errors/selection/greedy IDs và pacing. Nếu lỗi, sửa trên baseline 0.6.1 này, không bỏ lock hoặc đổi reader để ép đạt. Cần ZIP cả cây `reports/` gồm log test và per-run vì latest chỉ giữ lần cuối.
-
-Chỉ sau khi official hybrid thật trên máy đích đạt mới tiếp tục metadata tensor/dtype/scale checkpoint revision đã ghim rồi projection nhiều block. Mapping hiện tại synthetic-only, chưa kết luận tương thích checkpoint đầy đủ; không tải checkpoint lớn chỉ để kiểm tra metadata.
-
-Tài liệu chính: `docs/SHARDED-DECODER.md`, mục bản sửa 0.6.1.
+Tài liệu chính: `docs/CHECKPOINT-METADATA.md`; lịch sử: `docs/SHARDED-DECODER.md`, `docs/SAFETENSORS.md`, `docs/BACKEND.md`, `docs/OFFICIAL-PARITY.md`.

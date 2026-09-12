@@ -2,6 +2,10 @@
 
 Đã có đường đọc file safetensors thật về định dạng, nhưng **chỉ kiểm chứng bằng tensor giả lập**. Không tải hoặc mở checkpoint GLM đầy đủ. Lệnh kiểm chứng không nhận đường dẫn/model ID tùy ý; nó tự tạo file thử nhỏ.
 
+## Cập nhật 0.7.0
+
+Đường decoder nhiều shard đã được nghiệm thu ở 0.6.1; xem [SHARDED-DECODER.md](SHARDED-DECODER.md). Bản 0.7.0 tách `parse_header_bytes` từ parser cũ để dùng chung với [audit metadata từ xa](CHECKPOINT-METADATA.md). Các quy tắc dtype/shape/offset, header 1 MiB và đọc tối đa 64 KiB của reader cũ không đổi. Hàm mới không mở file, không tạo file sparse giả và không đọc payload; nó xác minh header theo kích thước file được caller cung cấp.
+
 ## Chạy lại
 
 ```powershell
@@ -67,6 +71,6 @@ Worker RSS đỉnh khoảng 404 MiB trong phép thử đầu, gồm Torch và th
 - Chưa nối safetensors loader vào toàn bộ decoder nhiều tensor/shard; chưa xác minh mapping checkpoint thật hay ngân sách KV/activation ở kích thước model.
 - CPU quota/commit cap vẫn được cài trước worker, nhưng trần RAM vật lý và GPU trung bình dưới tải lâu dài chưa được chứng minh.
 
-Bước tiếp theo được ghi nhận ở bản 0.5.0 là nối decoder thu nhỏ với safetensors nhiều shard. Đường đọc này đã triển khai trong **0.6.0**; xem [SHARDED-DECODER.md](SHARDED-DECODER.md) về kiểm chứng mới và phần official Windows còn cần chạy lại. Vẫn chỉ dùng file thử nhỏ; chưa cần tải checkpoint 755 GB.
+Bước tiếp theo được ghi nhận ở bản 0.5.0 là nối decoder thu nhỏ với safetensors nhiều shard. Đường đọc này đã triển khai trong **0.6.0**; xem [SHARDED-DECODER.md](SHARDED-DECODER.md) về kiểm chứng và nghiệm thu official Windows 0.6.1 đã nhận. Vẫn chỉ dùng file thử nhỏ; chưa cần tải checkpoint 755 GB.
 
 Nguồn: [đặc tả safetensors v0.8.0](https://github.com/safetensors/safetensors/tree/v0.8.0#format), [bộ giải mã FP8 Transformers đã ghim](https://github.com/huggingface/transformers/blob/3f601734a3580f55484720770850966bba060e4f/src/transformers/integrations/finegrained_fp8.py).

@@ -189,34 +189,7 @@ class SafeTensorReader:
         for offset in range(0, length, MAX_READ_BYTES):
             chunk = min(MAX_READ_BYTES, length - offset)
             header[offset:offset + chunk] = self._read_at(8 + offset, chunk)
-        if header[0] != ord("{"):
-            raise SafeTensorError("Safetensors header must begin with '{'")
-        try:
-            root = json.loads(header.decode("utf-8", errors="strict"),
-                              object_pairs_hook=_unique_object,
-                              parse_constant=_reject_constant)
-        except (UnicodeError, ValueError, RecursionError) as error:
-            raise SafeTensorError(f"Invalid safetensors JSON header: {error}") from error
-        if not isinstance(root, dict):
-            raise SafeTensorError("Safetensors header must be a JSON object")
-        metadata = root.pop("__metadata__", {})
-        self._validate_metadata(metadata)
-        if len(root) > MAX_TENSORS:
-            raise SafeTensorError("Too many tensors for local metadata policy")
-        payload_bytes = self._file_size - self._payload_start
-        tensors = {}
-        for name, entry in root.items():
-            tensors[name] = self._validate_tensor(name, entry, payload_bytes)
-        cursor = 0
-        for name, tensor in sorted(tensors.items(), key=lambda pair: pair[1].data_offsets):
-            start, end = tensor.data_offsets
-            if start != cursor:
-                raise SafeTensorError(f"Tensor {name!r} overlaps data or leaves a payload gap")
-            cursor = end
-        if cursor != payload_bytes:
-            raise SafeTensorError("Trailing unclaimed safetensors payload bytes")
-        self._tensors = MappingProxyType(tensors)
-        self._metadata = MappingProxyType(dict(metadata))
+        self._tensors, self._metadata = parse_header_bytes(header, self._file_size)
 
     @staticmethod
     def _validate_metadata(metadata: object) -> None:
@@ -326,3 +299,42 @@ class SafeTensorReader:
             "policy_max_read_bytes": MAX_READ_BYTES,
             "content_verification": "stat_fingerprint_only_no_checksum",
         }
+
+
+def parse_header_bytes(header: bytes | bytearray, file_size: int):
+    """Validate only header metadata against a declared whole-file length.
+
+    Shares every dtype/offset/shape rule with the local reader. Does not open a
+    file, allocate payload, or establish authenticity of the declared length.
+    """
+    if not isinstance(header, (bytes, bytearray)) or not 1 <= len(header) <= MAX_HEADER_BYTES:
+        raise SafeTensorError("Header length outside local 1-byte to 1-MiB policy")
+    if type(file_size) is not int or not 8 + len(header) <= file_size <= MAX_FILE_BYTES:
+        raise SafeTensorError("Header length exceeds file size or local file-size policy")
+    if header[0] != ord("{"):
+        raise SafeTensorError("Safetensors header must begin with '{'")
+    try:
+        root = json.loads(header.decode("utf-8", errors="strict"),
+                          object_pairs_hook=_unique_object,
+                          parse_constant=_reject_constant)
+    except (UnicodeError, ValueError, RecursionError) as error:
+        raise SafeTensorError(f"Invalid safetensors JSON header: {error}") from error
+    if not isinstance(root, dict):
+        raise SafeTensorError("Safetensors header must be a JSON object")
+    metadata = root.pop("__metadata__", {})
+    SafeTensorReader._validate_metadata(metadata)
+    if len(root) > MAX_TENSORS:
+        raise SafeTensorError("Too many tensors for local metadata policy")
+    payload_bytes = file_size - 8 - len(header)
+    tensors = {}
+    for name, entry in root.items():
+        tensors[name] = SafeTensorReader._validate_tensor(name, entry, payload_bytes)
+    cursor = 0
+    for name, tensor in sorted(tensors.items(), key=lambda pair: pair[1].data_offsets):
+        start, end = tensor.data_offsets
+        if start != cursor:
+            raise SafeTensorError(f"Tensor {name!r} overlaps data or leaves a payload gap")
+        cursor = end
+    if cursor != payload_bytes:
+        raise SafeTensorError("Trailing unclaimed safetensors payload bytes")
+    return MappingProxyType(tensors), MappingProxyType(dict(metadata))

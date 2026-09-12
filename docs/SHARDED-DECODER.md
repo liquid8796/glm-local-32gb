@@ -2,6 +2,12 @@
 
 Bước tiếp nối của `docs/SAFETENSORS.md`: **decoder thu nhỏ đã có đường đọc safetensors nhiều shard**, thay vì chỉ kiểm tra các ma trận rời. Chỉ dùng trọng số giả lập cố định; không tải checkpoint, không thêm lệnh chat, không tuyên bố chạy GLM đầy đủ.
 
+## Trạng thái cập nhật 0.7.0
+
+Mốc official hybrid 0.6.1 đã đạt trên máy người dùng: 376 test OK, bốn ca 8+4, 32+4, 64+4 và 120+8 PASS. Serializer TensorSpec đã chạy với safetensors 0.8.0 thực; không còn yêu cầu chạy lại các ca đó để nghiệm thu mốc cũ. [Biên bản Windows](verification/windows-acceptance-v0.6.1.md).
+
+Các mục 0.6.0/0.6.1 bên dưới giữ lại diễn biến lịch sử. Bước hiện tại là [metadata checkpoint 0.7.0](CHECKPOINT-METADATA.md); full-model runtime vẫn chưa được xác minh.
+
 ## Chạy trên Windows
 
 Giữ nguyên cấu hình, compiler và môi trường tham chiếu của bản 0.5.0. Nếu giải nén vào thư mục mới chưa có DLL, chạy `build-native.bat`. Nếu chưa có `.venv-reference`, chạy `setup-reference.bat`. Hai script này vẫn là script cũ; không thay đổi revision hoặc cài đặt lại môi trường đang có.
@@ -93,7 +99,7 @@ Mọi ca khớp lựa chọn attention/expert và chuỗi greedy sinh độc l�
 
 ## Bước tiếp theo
 
-Chạy official hybrid safetensors trên máy mục tiêu, gồm ca 120 + 8, rồi kiểm tra các report thật. Nếu các ca đó đạt, tiếp tục xác minh mapping/dtype/scale từ metadata checkpoint đã ghim và thiết kế projection nhiều block ở kích thước lớn. Chưa tải 755 GB trọng số chỉ để làm các bước nhỏ này.
+Mốc official hybrid 0.6.1 đã đạt theo report người dùng. Bản 0.7.0 đã triển khai lệnh metadata-check; cần chạy lệnh đó trên máy có truy cập Hugging Face để lấy cấu trúc tensor thật, rồi xem catalogue và profile gaps trước khi triển khai projection nhiều block. Chưa tải toàn bộ trọng số.
 
 Nguồn định dạng: [Hugging Face sharded checkpoints](https://github.com/huggingface/transformers/blob/main/docs/source/en/models.md#sharded-checkpoints), [safetensors format](https://github.com/huggingface/safetensors#format). Các đường dẫn nhánh chính có thể thay đổi; contract miniature và revision oracle được ghim riêng trong source.
 

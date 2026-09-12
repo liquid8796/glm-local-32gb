@@ -132,10 +132,20 @@ def main(argv=None):
     storage = sub.add_parser("storage-check", help="Validate bounded safetensors and FP8 scales using only small synthetic files")
     storage.add_argument("--backend", choices=("cpu", "hybrid"), default="hybrid")
     storage.add_argument("--seed", type=int, default=7)
+    metadata = sub.add_parser("metadata-check", help="Inspect pinned config/index/shard headers only; never tensor payload")
+    metadata.add_argument("--max-shards", type=int, default=512,
+                          help="Maximum headers to inspect; partial coverage cannot PASS")
+    metadata.add_argument("--budget-mib", type=int, default=64,
+                          help="Aggregate application metadata body read budget, 1..128 MiB")
+    metadata.add_argument("--offline", type=Path,
+                          help="Replay an evidence directory without network access")
     args = parser.parse_args(argv)
     try:
         settings = read_json(args.config)
         validate_settings(settings)
+        if args.command == "metadata-check":
+            from .checkpoint_check import launch_metadata
+            return launch_metadata(ROOT, settings, args.max_shards, args.budget_mib, args.offline)
         if args.command == "doctor":
             return doctor(settings, args.refresh)
         if args.command == "policy-check":

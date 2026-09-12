@@ -53,4 +53,4 @@ Kết quả mới nhất: `reports/parity-latest.md`/JSON; mỗi lần chạy c�
 
 ## Tiếp theo
 
-Bản 0.5.0 đã thêm [reader safetensors và kiểm chứng FP8 theo khối](SAFETENSORS.md). Tiếp theo là nối reader vào decoder thu nhỏ qua nhiều tensor/shard giả lập, rồi mới kiểm tra mapping checkpoint thực. Hiện chưa cần tải 755 GB, giải phóng ổ đĩa hoặc mua phần cứng.
+Reader và đường decoder safetensors nhiều shard đã được nghiệm thu ở 0.6.1; xem [biên bản Windows](verification/windows-acceptance-v0.6.1.md). Bản 0.7.0 thêm [audit metadata checkpoint](CHECKPOINT-METADATA.md). Cần report metadata thật trước khi chọn mapping/projection tiếp theo; không tải toàn bộ trọng số ở bước này.

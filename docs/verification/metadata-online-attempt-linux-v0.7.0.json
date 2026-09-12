@@ -1,0 +1,69 @@
+{
+  "tool_version": "0.7.0",
+  "scope": "checkpoint_metadata_only",
+  "status": "ERROR",
+  "model_id": "dealignai/GLM-5.3-CYBERSECURITY-FP8",
+  "revision": "5915c1b88f998a9c1e1a0c83688e285a08ae3ca5",
+  "parameters": {
+    "max_shards": 1,
+    "budget_mib": 64,
+    "offline": null
+  },
+  "stage": "fetch_model",
+  "headers_checked": 0,
+  "metadata_structure_verified": false,
+  "architecture_mapping_verified": false,
+  "inference_verified": false,
+  "real_checkpoint_compatible": false,
+  "full_model_loaded": false,
+  "full_model_limits_verified": false,
+  "payload_values_verified": false,
+  "gpu_used": false,
+  "gpu_cap_verified": false,
+  "job_policy_verified": false,
+  "physical_ram_hard_cap_verified": false,
+  "notes": [
+    "PASS is metadata-only; it never unblocks doctor or proves full-model inference.",
+    "Scale values, NaNs, tensor payload checksums and numeric projection were not read/tested.",
+    "Known-name shape checks are incomplete; unreviewed tensors are retained in the catalogue.",
+    "Snapshot hashes detect local changes, not a forged snapshot with recomputed hashes.",
+    "HTTP/body and header limits do not cap OS/TLS buffers or whole-system physical RAM.",
+    "Non-Windows metadata audit: OS CPU/committed-memory quota was not installed."
+  ],
+  "evidence": "evidence/snapshot.json",
+  "source_mode": "online",
+  "provenance_scope": "Pinned HTTPS URLs plus model API id/sha and any supplied X-Repo-Commit",
+  "error": "MetadataError: Metadata connection failed (URLError); check DNS, HTTPS access and the configured revision",
+  "traceback": "Traceback (most recent call last):\n  File \"/mnt/data/work-v062/glm-local-32gb/glm_local/checkpoint_check.py\", line 92, in execute_metadata\n    raw = source.json_bytes(kind)\n  File \"/mnt/data/work-v062/glm-local-32gb/glm_local/checkpoint_http.py\", line 240, in json_bytes\n    with self._open(url, {}) as response:\n         ~~~~~~~~~~^^^^^^^^^\n  File \"/mnt/data/work-v062/glm-local-32gb/glm_local/checkpoint_http.py\", line 197, in _open\n    raise MetadataError(f\"Metadata connection failed ({type(error).__name__}); \"\n                        \"check DNS, HTTPS access and the configured revision\") from None\nglm_local.checkpoint_http.MetadataError: Metadata connection failed (URLError); check DNS, HTTPS access and the configured revision\n",
+  "io": {
+    "body_bytes_read": 0,
+    "read_calls": 0,
+    "max_actual_read_bytes": 0,
+    "budget_bytes": 67108864,
+    "mode": "online",
+    "requests": 1,
+    "redirects": 0,
+    "range_requests": 0,
+    "response_hosts": [
+      "huggingface.co"
+    ],
+    "matching_repo_commit_headers": 0,
+    "tensor_payload_bytes_requested": 0,
+    "limits": {
+      "total_body_bytes": 67108864,
+      "max_requests": 4096,
+      "timeout_seconds": 30,
+      "total_seconds": 1800,
+      "max_redirects": 5
+    },
+    "counter_scope": "Application metadata body reads; excludes HTTP/TLS buffers"
+  },
+  "checked_at": "2026-09-12T03:56:57.538024+00:00",
+  "worker_environment": {
+    "python_version": "3.13.5",
+    "python_executable": "/opt/pyvenv/bin/python"
+  },
+  "installed_job_policy": null,
+  "child_exit_code": 1,
+  "run_directory": "/mnt/data/work-v062/glm-local-32gb/reports/metadata/20260912T035657Z-9170cd41"
+}

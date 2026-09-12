@@ -1,21 +1,21 @@
 # GLM Local 32GB — decoder và đọc trọng số theo khối
 
-**Trạng thái 0.6.1: sửa lỗi serializer `TensorSpec` khi tạo fixture safetensors bốn shard; vẫn chưa chạy checkpoint GLM thật.**
+**Trạng thái 0.7.0: thêm kiểm tra metadata checkpoint đã ghim bằng HTTP Range và snapshot offline. Không tải payload trọng số, chưa chạy checkpoint đầy đủ.**
 
-Bản 0.6.0 đã triển khai: `mini` và `parity` nhận `--storage safetensors`. Oracle vẫn đọc fixture private gốc để độc lập với loader mới; mặc định các lệnh cũ không đổi. Xem [hướng dẫn nhiều shard](docs/SHARDED-DECODER.md) và [Current Memory Snapshot](docs/CURRENT-MEMORY.md).
+Baseline **0.6.1 đã được nghiệm thu trên Windows** qua `reports(2).zip`: 376 test OK và bốn ca official hybrid safetensors PASS, gồm 120 + 8 token; serializer TensorSpec chạy với safetensors 0.8.0 thực. Đây là bằng chứng người dùng gửi trước bản vá này, không phải lần chạy Windows mới. [Biên bản](docs/verification/windows-acceptance-v0.6.1.md).
 
-Report người dùng ngày 12/09/2026 dừng ở `TypeError: argument 'tensor_dict': 'dict' object is not an instance of 'TensorSpec'`, trước khi chạy native/hybrid. Job Object đã cài policy CPU 70% và committed memory 32.000.000.000 byte; điều đó không chứng minh parity hoặc giới hạn GPU đã đạt. Bản sửa giữ nguyên `safetensors==0.8.0` trong lock, hỗ trợ cả raw-dict API 0.7 và `TensorSpec` API 0.8, không chuyển FP8 sang định dạng khác. Report lỗi mới có tham số, version tool/worker và traceback.
-
-Kiểm chứng 0.6.1 tại Linux: **340 test đạt, 26 bỏ qua trong 366 test được phát hiện** ([log](docs/verification/unit-tests-linux-v0.6.1.txt)). Thư viện thực ở đây là safetensors **0.7.0**; nhánh 0.8 được kiểm tra bằng **mô phỏng hợp đồng API**, không phải extension 0.8.0 thật. Không tải được wheel 0.8.0 do môi trường không truy cập được máy chủ gói. Chưa chạy lại Windows/CUDA/Transformers đúng revision. Các số liệu C/GCC và Windows bên dưới là bằng chứng lịch sử, không được gộp thành nghiệm thu mới. [Chi tiết bản sửa](docs/SHARDED-DECODER.md#bản-sửa-061--serializer-tensorspec).
+Bản 0.7.0 thêm `metadata-check`: đọc model manifest, `config.json`, index và **chỉ prefix/header** của từng shard; đối chiếu index/header, tensor dtype/shape và cặp scale 128×128 theo profile hiện tại. Tensor chưa được nhận diện vẫn được ghi vào catalogue là `not_reviewed`; không dùng mapping miniature để tuyên bố tương thích GLM thật. [Hướng dẫn metadata](docs/CHECKPOINT-METADATA.md) · [Current Memory Snapshot](docs/CURRENT-MEMORY.md).
 
 ```powershell
-.\glm.bat parity --storage safetensors --backend hybrid
-.\glm.bat parity --storage safetensors --backend hybrid --lengths 120 --generate 8
+.\test-reference.bat 2>&1 | Tee-Object -FilePath .\reports\test-reference-v0.7.0.log
+.\glm.bat metadata-check
 ```
 
-Áp dụng 0.6.1 lên thư mục hiện tại thì giữ `.venv-reference` và `build`; không cần hạ thư viện hoặc build lại DLL vì bản sửa không thay native code.
+Giữ `.venv-reference` và `build` hiện có khi chép bản mới. **Không cần build lại DLL hoặc cài thêm thư viện** cho lệnh metadata; kernel C/CUDA, graph, dependency/revision lock và quota giữ nguyên. Parser header được tách thành hàm dùng chung cho reader cũ và checker mới, không nới policy reader. Trên Windows, metadata worker cũng được gắn Job Object trước khi chạy (CPU 70%, committed memory 32.000.000.000 byte theo cấu hình); không tạo CUDA context.
 
-Có thể double-click `parity-sharded.bat`; chạy `test-reference.bat` để kiểm tra trên máy mục tiêu. Khi giải nén vào thư mục mới, cần có DLL từ `build-native.bat` và môi trường từ `setup-reference.bat`. Không thay đổi model, revision lock hay quota hiện tại.
+Report: `reports/metadata-latest.json`/Markdown và `reports/metadata/<run-id>/`. Mặc định đọc tối đa 512 shard và 64 MiB body metadata; **không dùng tải toàn file khi server bỏ qua Range**. `PASS` chỉ có nghĩa bước metadata đạt, không gỡ `doctor BLOCKED`.
+
+Kiểm thử mới tại Linux: **453 test được phát hiện, 427 đạt, 26 bỏ qua**, gồm **87 test mới** không cần mạng/GPU. [Log](docs/verification/unit-tests-linux-v0.7.0.txt). Lần thử mạng thật tại đây dừng ở DNS khi lấy model manifest: **0 byte metadata, 0 yêu cầu Range**; chưa xác minh config/index/header từ xa của checkpoint. [Báo cáo](docs/verification/metadata-online-attempt-linux-v0.7.0.json). Chưa chạy lại Windows/RTX 3070/Transformers đúng revision cho 0.7.0 tại môi trường này.
 
 Project được tạo cho `dealignai/GLM-5.3-CYBERSECURITY-FP8`, giữ đúng checkpoint FP8 theo yêu cầu. Mã Kimi gốc được giữ bằng Git submodule tại `vendor/kimi-k3-in-c`, commit `ac1584a70205c3a00d5346f736834818f4cc11b4`. Các ý tưởng được dùng làm cơ sở là đọc trọng số theo nhu cầu, ngân sách bộ nhớ rõ ràng và kiểm tra tính đúng trước khi benchmark. Phần mới có kernel FP8 C cho CPU, PTX cho GPU và bộ điều phối thử nghiệm bằng Python. Chưa port graph Kimi sang GLM, chưa tải checkpoint thật.
 
@@ -100,6 +100,10 @@ GLM và Kimi có graph khác nhau. Kimi hiện chỉ chạy CPU. GPU này cần 
 | Đường dẫn | Chức năng |
 |---|---|
 | `vendor/kimi-k3-in-c/` | Source upstream nguyên trạng, ghim commit, giữ license Apache-2.0 |
+| `glm_local/checkpoint_check.py` | Điều phối audit metadata, Windows worker, catalogue và report theo từng run |
+| `glm_local/checkpoint_http.py` | HTTP Range nghiêm ngặt, ghim revision, giới hạn body/read/redirect/thời gian |
+| `glm_local/checkpoint_snapshot.py` | Snapshot header/JSON có hash và replay offline không gọi mạng |
+| `glm_local/checkpoint_schema.py` | Đối chiếu index/header/config và phát hiện khoảng trống profile FP8 |
 | `glm_local/metadata.py` | Đọc JSON công khai có giới hạn kích thước, xác minh ID/revision và manifest |
 | `glm_local/hardware.py` | Đọc CPU/RAM/ổ đĩa qua CIM và GPU qua nvidia-smi |
 | `glm_local/audit.py` | Kiểm tra ngân sách, shard còn thiếu và những điều kiện chưa đáp ứng |

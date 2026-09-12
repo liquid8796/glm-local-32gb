@@ -1,0 +1,58 @@
+{
+  "baseline": "0.6.1",
+  "release": "0.7.0",
+  "files": [
+    {
+      "file": "config/local.json",
+      "unchanged": true,
+      "sha256": "2da6dc11d65544bcf1cc9dccbfe9bc0d37aba989dfae89f7bd42edc9a1479652"
+    },
+    {
+      "file": "config/reference-lock.json",
+      "unchanged": true,
+      "sha256": "5b876414d6089325f1f3c7abd6237a2f2757f62200883ca5af35571d1d549160"
+    },
+    {
+      "file": "requirements-reference.lock.txt",
+      "unchanged": true,
+      "sha256": "84231564e89802a36c349774ea90b8f2b057b7d84726e780917827c6a9fb9e41"
+    },
+    {
+      "file": "native/fp8_cpu.c",
+      "unchanged": true,
+      "sha256": "65461d20d8b284485ee0cdd6f289664e7532135b682d9d95b14196785656ddbb"
+    },
+    {
+      "file": "native/fp8_matvec.ptx",
+      "unchanged": true,
+      "sha256": "0bf5cc214490f6ed8c341bed590023fe4bdeeab5d2070a58c407e9f6b9c8b9e7"
+    },
+    {
+      "file": "native/topk_cpu.cpp",
+      "unchanged": true,
+      "sha256": "ef7aa1cc93714412b01b2471cf83be0c36135140d6797ee40cc92e025978da8d"
+    },
+    {
+      "file": "glm_local/mini_engine.py",
+      "unchanged": true,
+      "sha256": "c7b9a22a77d4c179af9003813df1cfd1e7d3f34b92016b103c65456f9d6ea67d"
+    },
+    {
+      "file": "glm_local/official_reference.py",
+      "unchanged": true,
+      "sha256": "25e0ff922fc7fd4d589a9b333b915e127a82c16cf268f9b8863add8bac8bed3f"
+    },
+    {
+      "file": "glm_local/sharded_safetensors.py",
+      "unchanged": true,
+      "sha256": "6a04bfc100d3f9041dc64c7948e3b9c71cf49d457c7e7540adee310fdddbb046"
+    },
+    {
+      "file": "glm_local/fp8_blocks.py",
+      "unchanged": true,
+      "sha256": "2a849a78d41e1dfd1486adee3b3b1b228b99f14647dee66cce375982ca017c61"
+    }
+  ],
+  "native_abi_changed": false,
+  "metadata_network_verified": false
+}

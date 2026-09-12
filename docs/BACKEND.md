@@ -1,6 +1,8 @@
 # Phần suy luận còn thiếu
 
-Đây là ghi nhận khoảng cách kỹ thuật và điều kiện nghiệm thu cho GLM. Bản 0.6.0 nối reader safetensors nhiều shard vào decoder thu nhỏ. Bản 0.6.1 sửa lỗi serializer `TensorSpec` từ report Windows của người dùng; parity dừng ở bước tạo fixture, nên vẫn cần chạy lại trên Windows; mục tiêu suy luận checkpoint đầy đủ **chưa hoàn tất**.
+Đây là ghi nhận khoảng cách kỹ thuật và điều kiện nghiệm thu cho GLM. Baseline 0.6.1 đã đạt official miniature hybrid safetensors trên Windows qua report người dùng. Bản 0.7.0 thêm audit metadata checkpoint có giới hạn và offline replay. Lần truy cập từ môi trường phát triển bị lỗi DNS, nên chưa có bằng chứng header checkpoint thật ở lần này. Mục tiêu suy luận checkpoint đầy đủ **chưa hoàn tất**.
+
+Xem [CHECKPOINT-METADATA.md](CHECKPOINT-METADATA.md) cho bước hiện tại. `metadata_structure_verified` và `fp8_adapter_metadata_verified` chỉ là các cờ metadata; `architecture_mapping_verified`, `real_checkpoint_compatible`, `full_model_loaded` vẫn false. Giới hạn index 1 MiB/8.192 tensor của reader chạy payload **không** được tự nới theo giới hạn 32 MiB/262.144 tensor của checker. Báo cáo riêng `runtime_index_policy` cho biết metadata có vượt policy reader hiện tại không.
 
 ## Khác biệt đã kiểm tra
 

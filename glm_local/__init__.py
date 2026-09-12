@@ -1,3 +1,3 @@
 """Synthetic bounded CPU/CUDA decoder experiments; no real-checkpoint runtime."""
 
-__version__ = "0.6.1"
+__version__ = "0.7.0"

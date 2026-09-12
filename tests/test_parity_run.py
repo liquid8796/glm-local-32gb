@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from glm_local import __version__
 from glm_local.parity_run import launch_parity
 from glm_local.winjob import InstalledLimits
 
@@ -48,3 +49,48 @@ class ParityLaunchTests(unittest.TestCase):
                 launch_parity(tmp, settings(), lengths=(64, 96, 120), generate=8)
             self.assertFalse((Path(tmp)/"reports").exists())
             runner.assert_not_called()
+
+    def test_worker_error_diagnostics_survive_into_latest_and_per_run_reports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            python = root / ".venv-reference/Scripts/python.exe"
+            python.parent.mkdir(parents=True)
+            python.touch()
+            def run(args, **kwargs):
+                kwargs["on_policy"](InstalledLimits(70, 32_000_000_000, True, True, True))
+                result = Path(args[-1]).parent / "result.json"
+                result.write_text(json.dumps({
+                    "status": "ERROR", "error": "TypeError: TensorSpec required",
+                    "traceback": "fixture.py: serializer failed", "inference_verified": False,
+                    "synthetic_official_parity_verified": False, "full_model_loaded": False,
+                    "worker_environment": {"safetensors_version": "0.8.0-test-double"}}))
+                return 1
+            with patch("glm_local.parity_run.run_local_process", side_effect=run), patch("builtins.print"):
+                self.assertEqual(launch_parity(root, settings(), storage="safetensors", lengths=(120,), generate=8), 1)
+            report = json.loads((root / "reports/parity-latest.json").read_text())
+            self.assertEqual(report["status"], "ERROR")
+            self.assertEqual(report["parameters"]["storage"], "safetensors")
+            self.assertEqual(report["parameters"]["lengths"], [120])
+            self.assertEqual(report["tool_version"], __version__)
+            self.assertEqual(report["traceback"], "fixture.py: serializer failed")
+            self.assertTrue(report["job_policy_verified"])
+            self.assertFalse(report["synthetic_official_parity_verified"])
+            run_dir = Path(report["run_directory"])
+            self.assertEqual(json.loads((run_dir / "result.json").read_text()), report)
+            self.assertEqual((root / "reports/parity-latest.md").read_text(), (run_dir / "result.md").read_text())
+
+    def test_parent_failure_retains_requested_storage_without_claiming_job_installation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            python = root / ".venv-reference/Scripts/python.exe"
+            python.parent.mkdir(parents=True)
+            python.touch()
+            with patch("glm_local.parity_run.run_local_process", side_effect=RuntimeError("launch failed")), \
+                    patch("builtins.print"):
+                self.assertEqual(launch_parity(root, settings(), storage="safetensors"), 1)
+            report = json.loads((root / "reports/parity-latest.json").read_text())
+            self.assertEqual(report["parameters"]["storage"], "safetensors")
+            self.assertEqual(report["tool_version"], __version__)
+            self.assertEqual(report["status"], "ERROR")
+            self.assertFalse(report["job_policy_verified"])
+            self.assertFalse(report["synthetic_official_parity_verified"])

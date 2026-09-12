@@ -16,12 +16,15 @@ from .cuda_probe import CudaTileBackend, MAX_OPERATIONS
 from .gpu_gate import GpuBoundaryGate
 from .mini_engine import MiniDecoder
 from .mini_spec import SPEC, SOURCE_URL
-from .mini_weights import MiniWeights, write_mini_bundle
+from .mini_weights import write_mini_bundle
+from .mini_storage import open_mini_storage
 from .process_metrics import sample_process, average_cpu_percent
 from .winjob import JobLimits, run_local_process
 
 
-def validate_mini(backend, lengths, generate, seed):
+def validate_mini(backend, lengths, generate, seed, storage="private"):
+    if storage not in ("private", "safetensors"):
+        raise ValueError("Miniature storage must be private or safetensors")
     if backend not in ("cpu", "hybrid"):
         raise ValueError("mini backend must be cpu or hybrid")
     if not isinstance(lengths, (list, tuple)) or not 1 <= len(lengths) <= 4:
@@ -193,7 +196,8 @@ def execute_mini(settings, parameters, directory):
     reference = ReferenceDecoder(bundle)
     cases = []
     with ExitStack() as stack:
-        weights = stack.enter_context(MiniWeights(bundle))
+        weights, exported = open_mini_storage(
+            stack, bundle, directory, parameters.get("storage", "private"))
         cpu = stack.enter_context(NativeCpuBackend())
         hybrid = parameters["backend"] == "hybrid"
         gpu = stack.enter_context(CudaTileBackend(settings["gpu_index"])) if hybrid else None
@@ -231,7 +235,9 @@ def execute_mini(settings, parameters, directory):
         "reference": {"kind": "independent full-sequence NumPy float64",
                       "numpy_version": numpy.__version__, "equation_source": SOURCE_URL},
         "cases": cases, "execution": execution,
-        "storage": {"scope": "incremental MiniWeights reader only", "reader_stats": storage_stats,
+        "storage": {"scope": "incremental native-side reader only",
+                    "format": parameters.get("storage", "private"),
+                    "exported_fixture": exported, "reader_stats": storage_stats,
                     "reference_included": False,
                     "reference_read_bound_bytes": 65537,
                     "reference_resident_weights": "all tiny matrices decoded to NumPy float64"},
@@ -259,6 +265,8 @@ def execute_mini(settings, parameters, directory):
 def render_mini_report(report):
     lines = ["# Synthetic miniature decoder validation", "", f"Status: **{report['status']}**", "",
              "**Real GLM checkpoint inference remains unverified.**", ""]
+    if "storage" in report:
+        lines.extend([f"Native weight storage: {report['storage']['format']}", ""])
     if "error" in report:
         lines.append(f"Error: {report['error']}")
     if "cases" in report:
@@ -281,10 +289,10 @@ def render_mini_report(report):
     return "\n".join(lines) + "\n"
 
 
-def launch_mini(root, settings, backend="hybrid", lengths=(8, 32, 64), generate=4, seed=7):
+def launch_mini(root, settings, backend="hybrid", lengths=(8, 32, 64), generate=4, seed=7, storage="private"):
     from .__main__ import save_json
     validate_settings(settings)
-    parameters = dict(backend=backend, lengths=list(lengths), generate=generate, seed=seed)
+    parameters = dict(backend=backend, lengths=list(lengths), generate=generate, seed=seed, storage=storage)
     validate_mini(**parameters)
     root = Path(root).resolve()
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]

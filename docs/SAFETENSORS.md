@@ -67,6 +67,6 @@ Worker RSS đỉnh khoảng 404 MiB trong phép thử đầu, gồm Torch và th
 - Chưa nối safetensors loader vào toàn bộ decoder nhiều tensor/shard; chưa xác minh mapping checkpoint thật hay ngân sách KV/activation ở kích thước model.
 - CPU quota/commit cap vẫn được cài trước worker, nhưng trần RAM vật lý và GPU trung bình dưới tải lâu dài chưa được chứng minh.
 
-Bước tiếp theo: cho decoder thu nhỏ đọc trọng số từ safetensors chia nhiều shard, xác minh ánh xạ tensor/scale và tiếp tục đối chiếu Transformers. Việc này vẫn dùng file thử nhỏ; bạn chưa cần tải checkpoint 755 GB.
+Bước tiếp theo được ghi nhận ở bản 0.5.0 là nối decoder thu nhỏ với safetensors nhiều shard. Đường đọc này đã triển khai trong **0.6.0**; xem [SHARDED-DECODER.md](SHARDED-DECODER.md) về kiểm chứng mới và phần official Windows còn cần chạy lại. Vẫn chỉ dùng file thử nhỏ; chưa cần tải checkpoint 755 GB.
 
 Nguồn: [đặc tả safetensors v0.8.0](https://github.com/safetensors/safetensors/tree/v0.8.0#format), [bộ giải mã FP8 Transformers đã ghim](https://github.com/huggingface/transformers/blob/3f601734a3580f55484720770850966bba060e4f/src/transformers/integrations/finegrained_fp8.py).

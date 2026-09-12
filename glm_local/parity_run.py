@@ -8,13 +8,15 @@ from pathlib import Path
 import sys
 import uuid
 
+from . import __version__
 from .audit import validate_settings
 from .cpu_probe import NativeCpuBackend
 from .cuda_probe import CudaTileBackend
 from .gpu_gate import GpuBoundaryGate
 from .mini_engine import MiniDecoder
 from .mini_run import NativeMiniLinear, validate_mini, _argmax
-from .mini_weights import MiniWeights, write_mini_bundle
+from .mini_weights import write_mini_bundle
+from .mini_storage import open_mini_storage
 from .native_topk import NativeTopK
 from .parity_compare import compare_step, HIDDEN_NAMES
 from .process_metrics import sample_process, average_cpu_percent
@@ -95,7 +97,8 @@ def execute_parity(settings, parameters, directory):
     manifest = write_mini_bundle(bundle, parameters["seed"])
     cases = []
     with ExitStack() as stack:
-        weights = stack.enter_context(MiniWeights(bundle))
+        weights, exported = open_mini_storage(
+            stack, bundle, directory, parameters.get("storage", "private"))
         cpu = stack.enter_context(NativeCpuBackend())
         hybrid = parameters["backend"] == "hybrid"
         gpu = stack.enter_context(CudaTileBackend(settings["gpu_index"])) if hybrid else None
@@ -120,6 +123,7 @@ def execute_parity(settings, parameters, directory):
         if gate:
             gate.finish()
         metadata = official.metadata
+        storage_stats = weights.stats()
         pacing = gate.summary() if gate else {"status": "not_used", "gpu_cap_verified": False}
         execution = {"cpu_projection_calls": linear.cpu_calls, "gpu_projection_calls": linear.gpu_calls,
                      "attention_selector": selector.metadata,
@@ -136,6 +140,10 @@ def execute_parity(settings, parameters, directory):
             "real_checkpoint_compatible": False, "full_model_loaded": False,
             "bit_exact": False, "fixture_sha256": manifest["sha256"],
             "provenance": provenance, "official": metadata, "execution": execution,
+            "storage": {"format": parameters.get("storage", "private"),
+                        "reader_stats": storage_stats, "exported_fixture": exported,
+                        "reference_storage": "independent original private fixture",
+                        "reference_included_in_reader_stats": False},
             "cases": cases, "pacing": pacing,
             "resources": {"peak_worker_rss_bytes": after.peak_working_set_bytes,
                           "peak_worker_private_commit_bytes": after.peak_private_commit_bytes,
@@ -160,8 +168,18 @@ def execute_parity(settings, parameters, directory):
 def render_parity(report):
     lines = ["# Official Transformers miniature comparison", "", f"Status: **{report['status']}**", "",
              "**Real GLM checkpoint compatibility and resource limits remain unverified.**", ""]
+    if "tool_version" in report:
+        lines.extend([f"Tool version: {report['tool_version']}", ""])
+    if "parameters" in report:
+        lines.extend(["Run parameters: " + json.dumps(report["parameters"], sort_keys=True), ""])
+    if "worker_environment" in report:
+        lines.extend(["Worker environment: " + json.dumps(report["worker_environment"], sort_keys=True), ""])
+    if "storage" in report:
+        lines.extend([f"Native weight storage: {report['storage']['format']}", ""])
     if "error" in report:
         lines.append(f"Error: {report['error']}")
+    if "traceback" in report:
+        lines.extend(["", "## Worker traceback", "", "```text", report["traceback"].rstrip(), "```", ""])
     if "cases" in report:
         lines.extend(["| Prompt + generated | Max logit error | Max hidden error | Attention / experts | Greedy IDs |",
                       "|---|---:|---:|---|---|"])
@@ -179,10 +197,10 @@ def render_parity(report):
     return "\n".join(lines) + "\n"
 
 
-def launch_parity(root, settings, backend="hybrid", lengths=(8, 32, 64), generate=4, seed=7):
+def launch_parity(root, settings, backend="hybrid", lengths=(8, 32, 64), generate=4, seed=7, storage="private"):
     from .__main__ import save_json
     validate_settings(settings)
-    parameters = dict(backend=backend, lengths=list(lengths), generate=generate, seed=seed)
+    parameters = dict(backend=backend, lengths=list(lengths), generate=generate, seed=seed, storage=storage)
     validate_mini(**parameters)
     root = Path(root).resolve()
     python = root / ".venv-reference" / "Scripts" / "python.exe"
@@ -209,7 +227,8 @@ def launch_parity(root, settings, backend="hybrid", lengths=(8, 32, 64), generat
         code = 1
         report = {"status": "ERROR", "error": str(error), "inference_verified": False,
                   "synthetic_official_parity_verified": False, "parameters": parameters}
-    report.update(installed_job_policy=captured[0] if captured else None,
+    report.setdefault("tool_version", __version__)
+    report.update(parameters=parameters, installed_job_policy=captured[0] if captured else None,
                   job_policy_verified=bool(captured), child_exit_code=code,
                   run_directory=str(directory), checked_at=datetime.now(timezone.utc).isoformat())
     save_json(directory / "result.json", report)

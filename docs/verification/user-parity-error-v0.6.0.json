@@ -1,0 +1,18 @@
+{
+  "status": "ERROR",
+  "error": "TypeError: argument 'tensor_dict': 'dict' object is not an instance of 'TensorSpec'",
+  "synthetic_official_parity_verified": false,
+  "inference_verified": false,
+  "full_model_loaded": false,
+  "job_policy_verified": true,
+  "installed_job_policy": {
+    "cpu_percent": 70.0,
+    "committed_memory_bytes": 32000000000,
+    "cpu_hard_cap": true,
+    "memory_limit_enabled": true,
+    "kill_on_close": true
+  },
+  "child_exit_code": 1,
+  "run_directory": "D:\\Project\\llm\\glm-local-32gb\\reports\\parity\\20260912T031916Z-6f0ce3fd",
+  "checked_at": "2026-09-12T03:19:18.463694+00:00"
+}

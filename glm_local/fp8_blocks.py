@@ -5,7 +5,7 @@ matrix with ceil(rows / 128) by ceil(cols / 128) entries. ``scale`` is the
 stored multiplicative dequantization factor: decoded_fp8 * scale, including
 when a checkpoint calls that factor ``weight_scale_inv``.
 
-The caller owns the already validated SafeTensorReader and its lifetime.
+The caller owns an already validated single-file or sharded reader and its lifetime.
 This adapter never loads a whole tensor, discovers tensor names, allocates a
 model, or invokes a compute backend. Each block reads exactly four scale
 bytes and at most 16384 packed weight bytes. Iteration retains no blocks.
@@ -20,6 +20,7 @@ from typing import Iterator, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .safetensor_reader import SafeTensorReader
+    from .sharded_safetensors import ShardedSafeTensorReader
 
 
 BLOCK = 128
@@ -54,7 +55,7 @@ class FP8BlockMatrix:
     until read; fully consume ``iter_blocks`` to validate every payload.
     """
 
-    def __init__(self, reader: SafeTensorReader, weight_name: str, scale_name: str):
+    def __init__(self, reader: SafeTensorReader | ShardedSafeTensorReader, weight_name: str, scale_name: str):
         if (not isinstance(weight_name, str) or not weight_name
                 or not isinstance(scale_name, str) or not scale_name):
             raise ValueError("Weight and scale tensor names must be explicit nonempty strings")

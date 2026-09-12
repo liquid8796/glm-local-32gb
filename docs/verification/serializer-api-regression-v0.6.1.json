@@ -1,0 +1,20 @@
+{
+  "scope": "Synthetic exporter API regression only; 0.8.0 calling contract simulated from official source, not a real 0.8.0 extension execution.",
+  "platform": "Linux-6.18.35-x86_64-with-glibc2.41",
+  "python_version": "3.13.5",
+  "installed_safetensors": "0.7.0",
+  "official_api_source": "https://github.com/huggingface/safetensors/blob/v0.8.0/bindings/python/src/lib.rs",
+  "actual_safetensors_0_8_0_executed": false,
+  "windows_cuda_official_parity_executed": false,
+  "baseline_error": "TypeError: argument 'tensor_dict': 'dict' object is not an instance of 'TensorSpec'",
+  "patched_export": {
+    "serializer_api": "TensorSpec",
+    "safetensors_version": "0.8.0-contract-test-double",
+    "shard_count": 4,
+    "tensor_count": 80,
+    "tensor_payload_bytes": 10072,
+    "weight_scale_pairs_cross_shards": true
+  },
+  "private_fixture_matrix_vector_embedding_parity": true,
+  "patched_status": "PASS"
+}

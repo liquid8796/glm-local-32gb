@@ -331,7 +331,7 @@ class MiniLaunchTests(unittest.TestCase):
             request = Path(command[-1])
             data = json.loads(request.read_text(encoding="utf-8"))
             self.assertEqual(data["parameters"], {"backend": "cpu", "lengths": [2],
-                                                   "generate": 1, "seed": 7})
+                                                   "generate": 1, "seed": 7, "storage": "private"})
             on_policy(policy)
             (request.parent / "result.json").write_text(json.dumps({"status": "PASS"}), encoding="utf-8")
             return 0

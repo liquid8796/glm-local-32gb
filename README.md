@@ -1,6 +1,21 @@
 # GLM Local 32GB — decoder và đọc trọng số theo khối
 
-**Trạng thái 0.5.0: đã có bộ đọc safetensors giới hạn theo khối và kiểm chứng FP8 CPU/GPU bằng file thử; chưa chạy checkpoint GLM thật.**
+**Trạng thái 0.6.1: sửa lỗi serializer `TensorSpec` khi tạo fixture safetensors bốn shard; vẫn chưa chạy checkpoint GLM thật.**
+
+Bản 0.6.0 đã triển khai: `mini` và `parity` nhận `--storage safetensors`. Oracle vẫn đọc fixture private gốc để độc lập với loader mới; mặc định các lệnh cũ không đổi. Xem [hướng dẫn nhiều shard](docs/SHARDED-DECODER.md) và [Current Memory Snapshot](docs/CURRENT-MEMORY.md).
+
+Report người dùng ngày 12/09/2026 dừng ở `TypeError: argument 'tensor_dict': 'dict' object is not an instance of 'TensorSpec'`, trước khi chạy native/hybrid. Job Object đã cài policy CPU 70% và committed memory 32.000.000.000 byte; điều đó không chứng minh parity hoặc giới hạn GPU đã đạt. Bản sửa giữ nguyên `safetensors==0.8.0` trong lock, hỗ trợ cả raw-dict API 0.7 và `TensorSpec` API 0.8, không chuyển FP8 sang định dạng khác. Report lỗi mới có tham số, version tool/worker và traceback.
+
+Kiểm chứng 0.6.1 tại Linux: **340 test đạt, 26 bỏ qua trong 366 test được phát hiện** ([log](docs/verification/unit-tests-linux-v0.6.1.txt)). Thư viện thực ở đây là safetensors **0.7.0**; nhánh 0.8 được kiểm tra bằng **mô phỏng hợp đồng API**, không phải extension 0.8.0 thật. Không tải được wheel 0.8.0 do môi trường không truy cập được máy chủ gói. Chưa chạy lại Windows/CUDA/Transformers đúng revision. Các số liệu C/GCC và Windows bên dưới là bằng chứng lịch sử, không được gộp thành nghiệm thu mới. [Chi tiết bản sửa](docs/SHARDED-DECODER.md#bản-sửa-061--serializer-tensorspec).
+
+```powershell
+.\glm.bat parity --storage safetensors --backend hybrid
+.\glm.bat parity --storage safetensors --backend hybrid --lengths 120 --generate 8
+```
+
+Áp dụng 0.6.1 lên thư mục hiện tại thì giữ `.venv-reference` và `build`; không cần hạ thư viện hoặc build lại DLL vì bản sửa không thay native code.
+
+Có thể double-click `parity-sharded.bat`; chạy `test-reference.bat` để kiểm tra trên máy mục tiêu. Khi giải nén vào thư mục mới, cần có DLL từ `build-native.bat` và môi trường từ `setup-reference.bat`. Không thay đổi model, revision lock hay quota hiện tại.
 
 Project được tạo cho `dealignai/GLM-5.3-CYBERSECURITY-FP8`, giữ đúng checkpoint FP8 theo yêu cầu. Mã Kimi gốc được giữ bằng Git submodule tại `vendor/kimi-k3-in-c`, commit `ac1584a70205c3a00d5346f736834818f4cc11b4`. Các ý tưởng được dùng làm cơ sở là đọc trọng số theo nhu cầu, ngân sách bộ nhớ rõ ràng và kiểm tra tính đúng trước khi benchmark. Phần mới có kernel FP8 C cho CPU, PTX cho GPU và bộ điều phối thử nghiệm bằng Python. Chưa port graph Kimi sang GLM, chưa tải checkpoint thật.
 
@@ -105,6 +120,9 @@ GLM và Kimi có graph khác nhau. Kimi hiện chỉ chạy CPU. GPU này cần 
 | `native/topk_cpu.cpp` | Bộ chọn FP32 top-k có cách xử lý bằng điểm tương thích runtime đã ghim |
 | `config/reference-lock.json` | Revision, phiên bản và hash source cho tham chiếu chính thức |
 | `glm_local/safetensor_reader.py` | Reader safetensors với header tối đa 1 MiB, mỗi lần đọc tối đa 64 KiB |
+| `glm_local/sharded_safetensors.py` | Index/header validation, lazy payload và LRU giới hạn file mở |
+| `glm_local/mini_safetensors.py` | Fixture bốn shard và adapter trọng số cho decoder cố định |
+| `glm_local/mini_storage.py` | Chọn storage native chung cho mini/parity; oracle không đổi |
 | `glm_local/fp8_blocks.py` | Ánh xạ cặp tensor FP8/scale được chỉ định rõ ràng thành các khối 128×128 |
 | `glm_local/safetensor_fixture.py` | Tạo file thử bằng safetensors chính thức và tham chiếu giải mã độc lập |
 | `glm_local/safetensor_check.py` | Kiểm chứng byte/scale/tính toán native và ghi báo cáo dưới Job Object |

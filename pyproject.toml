@@ -1,12 +1,13 @@
 [project]
 name = "glm-local-32gb"
-version = "0.5.0"
+version = "0.6.1"
 description = "Synthetic decoder parity and bounded safetensors FP8 block validation"
 requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
 validation = ["numpy>=2.0,<3.0"]
+storage-validation = ["numpy>=2.0,<3.0", "safetensors>=0.7,<1.0"]
 
 [tool.ruff]
 line-length = 100

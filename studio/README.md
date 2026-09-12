@@ -1,5 +1,7 @@
 # ModelDesk
 
+**Bản 1.0.1** sửa lỗi mở EXE nhưng không hiện cửa sổ: bỏ chờ đồng bộ trên tác vụ đọc file bất đồng bộ trong quá trình nạp profile. Cửa sổ hiện trước khi nạp workspace, và việc quét profile chạy ngoài luồng UI. Nếu đang dùng bản 1.0.0, build lại hoặc publish lại để thay toàn bộ các DLL đi kèm EXE.
+
 ModelDesk là ứng dụng WPF và CLI cho việc tải model từ Hugging Face, quản lý checkpoint cục bộ và sử dụng Python core GLM hiện có. GUI và CLI dùng chung các service C#; phần Python được giữ nguyên. Trình tải có thể tải repository ngoài hai profile GLM, nhưng việc tải đủ tệp không xác nhận model đó có thể suy luận bằng Python core này.
 
 ## Mở ứng dụng

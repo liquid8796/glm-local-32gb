@@ -34,16 +34,34 @@ internal static class LocalFiles
     internal static async Task<byte[]> ReadBoundedAsync(string path, int maximum, CancellationToken cancellationToken = default)
     {
         CheckPath(path);
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
             65536, FileOptions.Asynchronous | FileOptions.SequentialScan);
         if (stream.Length > maximum) throw new InvalidDataException($"File exceeds the {maximum:N0}-byte limit.");
         using var destination = new MemoryStream((int)stream.Length);
         var buffer = new byte[65536];
         int count;
-        while ((count = await stream.ReadAsync(buffer, cancellationToken)) != 0)
+        while ((count = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) != 0)
         {
             if (destination.Length + count > maximum) throw new InvalidDataException("File grew beyond its size limit.");
-            await destination.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
+            destination.Write(buffer, 0, count);
+        }
+        return destination.ToArray();
+    }
+
+    /// <summary>Bounded file reads for synchronous APIs, without blocking an async continuation.</summary>
+    internal static byte[] ReadBounded(string path, int maximum)
+    {
+        CheckPath(path);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete, 65536, FileOptions.SequentialScan);
+        if (stream.Length > maximum) throw new InvalidDataException($"File exceeds the {maximum:N0}-byte limit.");
+        using var destination = new MemoryStream((int)stream.Length);
+        var buffer = new byte[65536];
+        int count;
+        while ((count = stream.Read(buffer, 0, buffer.Length)) != 0)
+        {
+            if (destination.Length + count > maximum) throw new InvalidDataException("File grew beyond its size limit.");
+            destination.Write(buffer, 0, count);
         }
         return destination.ToArray();
     }
@@ -55,7 +73,7 @@ internal static class LocalFiles
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            await File.WriteAllBytesAsync(temporary, bytes, cancellationToken);
+            await File.WriteAllBytesAsync(temporary, bytes, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             File.Move(temporary, path, true);
         }

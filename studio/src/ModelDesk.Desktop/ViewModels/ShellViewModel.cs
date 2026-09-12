@@ -13,6 +13,7 @@ public sealed class ShellViewModel : ObservableObject
     private AppSettings current = new();
     private ModelProfile? profile;
     private int tab;
+    private bool initializing;
     private string error = "", readiness = "Chưa có báo cáo sẵn sàng", readinessDetail = "Chạy kiểm tra để cập nhật thông tin phần cứng và trọng số cục bộ.";
     public ShellViewModel(ISettingsStore store, ICredentialStore credentials, IPythonCoreService core, IReportService reports, IHuggingFaceClient hub, IModelDownloader downloader, IDownloadQueueStore queue, Func<AppSettings>? discover = null)
     {
@@ -49,11 +50,12 @@ public sealed class ShellViewModel : ObservableObject
         }
     }
     public int SelectedTab { get => tab; set => Set(ref tab, value); }
+    public bool IsInitializing { get => initializing; private set { Set(ref initializing, value); Raise(nameof(PythonStatus)); } }
     public string Error { get => error; private set => Set(ref error, value); }
     public string ModelId => SelectedProfile?.ModelId ?? "Chưa chọn profile";
     public string Revision => SelectedProfile?.Revision ?? "—";
     public string ProfileDirectory => SelectedProfile is null ? "—" : Resolve(SelectedProfile.ModelDirectory);
-    public string PythonStatus => File.Exists(current.PythonExecutable) ? "Python · đã tìm thấy" : "Python · kiểm tra đường dẫn";
+    public string PythonStatus => IsInitializing ? "Đang nạp workspace…" : File.Exists(current.PythonExecutable) ? "Python · đã tìm thấy" : "Python · kiểm tra đường dẫn";
     public string PythonPath => current.PythonExecutable;
     public string ResourceSummary => $"{current.RamBudgetBytes / 1_000_000_000d:0.##} GB RAM · CPU ≤ {current.CpuLimitPercent}% · GPU mục tiêu {current.GpuTargetPercent:0.#}%";
     public string Readiness { get => readiness; private set => Set(ref readiness, value); }
@@ -66,18 +68,23 @@ public sealed class ShellViewModel : ObservableObject
     public event Action<string>? ThemeChanged;
     public async Task InitializeAsync()
     {
-        AppSettings? loaded = null;
-        try { loaded = await store.LoadAsync(); }
-        catch (Exception exception)
+        IsInitializing = true;
+        try
         {
-            ShowError(exception);
-            try { loaded = discoverDefaults?.Invoke(); } catch (Exception discoveryError) { ShowError(discoveryError); }
+            AppSettings? loaded = null;
+            try { loaded = await store.LoadAsync(); }
+            catch (Exception exception)
+            {
+                ShowError(exception);
+                try { loaded = discoverDefaults?.Invoke(); } catch (Exception discoveryError) { ShowError(discoveryError); }
+            }
+            try { if (loaded is not null) await ApplyAsync(loaded); }
+            catch (Exception exception) { ShowError(exception); Settings.Load(current); }
+            // Hub/queue recovery remains available even if the Python workspace needs repair.
+            try { await Downloads.InitializeAsync(); } catch (Exception exception) { ShowError(exception); }
+            try { await Settings.InspectTokenAsync(); } catch (Exception exception) { ShowError(exception); }
         }
-        try { if (loaded is not null) await ApplyAsync(loaded); }
-        catch (Exception exception) { ShowError(exception); Settings.Load(current); }
-        // Hub/queue recovery remains available even if the Python workspace needs repair.
-        try { await Downloads.InitializeAsync(); } catch (Exception exception) { ShowError(exception); }
-        try { await Settings.InspectTokenAsync(); } catch (Exception exception) { ShowError(exception); }
+        finally { IsInitializing = false; }
     }
     public void ShowError(Exception exception) { Error = exception.Message; DiagnosticLog.Write(exception.ToString()); }
     public async Task CloseAsync() => await System.Threading.Tasks.Task.WhenAll(Task.StopAsync(), Downloads.StopAsync());
@@ -87,7 +94,8 @@ public sealed class ShellViewModel : ObservableObject
         current = settings; Settings.Load(settings); Profiles.Clear(); Task.IsAvailable = false;
         Raise(nameof(PythonStatus)); Raise(nameof(PythonPath)); Raise(nameof(ResourceSummary));
         ThemeChanged?.Invoke(settings.Theme); await Downloads.ApplySettingsAsync();
-        foreach (var item in core.GetProfiles(settings.ProjectRoot)) Profiles.Add(item);
+        var profiles = await System.Threading.Tasks.Task.Run(() => core.GetProfiles(settings.ProjectRoot));
+        foreach (var item in profiles) Profiles.Add(item);
         SelectedProfile = Profiles.FirstOrDefault(item => item.Key == current.Profile) ?? Profiles.FirstOrDefault();
         Task.IsAvailable = SelectedProfile is not null;
         if (SelectedProfile is not null)

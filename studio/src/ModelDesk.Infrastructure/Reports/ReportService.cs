@@ -43,8 +43,8 @@ public sealed class ReportService : IReportService
                     {
                         try
                         {
-                            using var document = JsonDocument.Parse(LocalFiles.ReadBoundedAsync(
-                                LocalFiles.Within(path, reportRoot), 65536).GetAwaiter().GetResult());
+                            using var document = JsonDocument.Parse(LocalFiles.ReadBounded(
+                                LocalFiles.Within(path, reportRoot), 65536));
                             if (document.RootElement.ValueKind == JsonValueKind.Object &&
                                 document.RootElement.TryGetProperty("status", out var value) && value.ValueKind == JsonValueKind.String)
                                 status = value.GetString();

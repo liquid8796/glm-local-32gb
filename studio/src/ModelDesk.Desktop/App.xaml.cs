@@ -18,9 +18,9 @@ public partial class App : Application
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         var state = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ModelDesk");
-        DiagnosticLog.Initialize(state);
         try
         {
+            DiagnosticLog.Initialize(state);
             var credentials = new WindowsCredentialStore(state);
             http = HubHttpClientFactory.Create();
             var model = new ShellViewModel(new JsonSettingsStore(state), credentials, new PythonCoreService(state), new ReportService(),
@@ -28,12 +28,11 @@ public partial class App : Application
             model.ThemeChanged += ThemeManager.Apply;
             ThemeManager.Apply("Dark");
             DispatcherUnhandledException += (_, args) => { DiagnosticLog.Write(args.Exception.ToString()); model.ShowError(args.Exception); args.Handled = true; };
-            DiagnosticLog.Write("Services composed; initializing workspace");
-            await model.InitializeAsync();
-            DiagnosticLog.Write($"Workspace initialization finished: {model.Profiles.Count} profiles; {model.PythonStatus}");
             var window = new MainWindow(model); MainWindow = window; window.Show();
             ShutdownMode = ShutdownMode.OnMainWindowClose;
-            DiagnosticLog.Write("Main window shown");
+            DiagnosticLog.Write("Main window shown; initializing workspace");
+            await model.InitializeAsync();
+            DiagnosticLog.Write($"Workspace initialization finished: {model.Profiles.Count} profiles; {model.PythonStatus}");
         }
         catch (Exception exception)
         {

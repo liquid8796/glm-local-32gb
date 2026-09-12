@@ -25,7 +25,7 @@ public sealed class PythonCoreService : IPythonCoreService
         {
             LocalFiles.CheckPath(path);
             if (new FileInfo(path).Length > 65536) throw new InvalidDataException("A model profile exceeds 64 KiB.");
-            using var document = JsonDocument.Parse(LocalFiles.ReadBoundedAsync(path, 65536).GetAwaiter().GetResult());
+            using var document = JsonDocument.Parse(LocalFiles.ReadBounded(path, 65536));
             var json = document.RootElement;
             var id = RequiredString(json, "model_id");
             var revision = RequiredString(json, "revision");

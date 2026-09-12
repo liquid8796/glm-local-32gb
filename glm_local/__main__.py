@@ -139,6 +139,7 @@ def main(argv=None):
                           help="Aggregate application metadata body read budget, 1..128 MiB")
     metadata.add_argument("--offline", type=Path,
                           help="Replay an evidence directory without network access")
+    sub.add_parser("architecture-check", help="Map GLM architecture from metadata catalogue only")
     args = parser.parse_args(argv)
     try:
         settings = read_json(args.config)
@@ -146,6 +147,11 @@ def main(argv=None):
         if args.command == "metadata-check":
             from .checkpoint_check import launch_metadata
             return launch_metadata(ROOT, settings, args.max_shards, args.budget_mib, args.offline)
+        if args.command == "architecture-check":
+            from .architecture.report import run_architecture
+            result = run_architecture(ROOT)
+            print(json.dumps(result, indent=2))
+            return 0 if result["status"] == "PASS" else 2
         if args.command == "doctor":
             return doctor(settings, args.refresh)
         if args.command == "policy-check":

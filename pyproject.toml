@@ -1,6 +1,6 @@
 [project]
 name = "glm-local-32gb"
-version = "0.10.0"
+version = "0.10.1"
 description = "Experimental GLM decoder with bounded FP8 and NVFP4 weight streaming"
 requires-python = ">=3.10"
 dependencies = []

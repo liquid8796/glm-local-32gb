@@ -1,5 +1,7 @@
 # ModelDesk
 
+**Bản 1.0.3 / core 0.10.1** sửa đường tính dense BF16/F16/F32 chậm bằng kernel native CPU, thêm bộ đệm đọc trọng số tối đa 8 MiB và tiến độ khởi tạo/token/layer/projection trong nhật ký. Timeout vẫn giới hạn toàn bộ lượt chạy; báo cáo giữ giai đoạn cuối và GUI phân biệt **Hết thời gian chờ** với lỗi thực thi khác. Chạy `build-native.bat` sau khi cập nhật source, rồi build lại GUI/CLI. Các phép tính và giới hạn RAM 32 GB được giữ; planner cộng thêm dung lượng bộ đệm đọc. Tốc độ kernel riêng không phải tốc độ toàn model.
+
 **Bản 1.0.2**: chọn kết quả tìm kiếm sẽ tự mở model ở bên phải. Trang Hub quét thư mục khi mở model, đổi thư mục, trở lại tab hoặc một lượt tải của model hoàn tất. File đích có đủ dung lượng được đánh dấu **Đã tải** và ẩn checkbox; file `.part` vẫn là tải dở. Bộ lọc hỗ trợ **Tất cả / Đã tải / Chưa tải**. Giữ Shift rồi bấm checkbox hoặc hàng cuối để chọn một dải theo thứ tự đang lọc/sắp xếp; các file đã tải hoặc không truy cập được bị bỏ qua.
 
 Trang Tải xuống có **Xóa danh sách**: chờ tác vụ đang tải dừng an toàn, dọn hàng đợi lưu trên máy và reset số lượng/byte/tốc độ về 0. File hoàn tất và dữ liệu tải dở vẫn giữ nguyên. Bấm tiêu đề **Tên tệp** hoặc **Model** để sắp xếp; dùng bộ lọc **Trạng thái** để thu gọn danh sách. Thống kê tổng vẫn tính toàn hàng đợi, không bị thay đổi bởi bộ lọc.
@@ -8,7 +10,7 @@ Quét thư mục chỉ đọc metadata filesystem (tên và dung lượng) để
 
 **Bản 1.0.1** sửa lỗi mở EXE nhưng không hiện cửa sổ: bỏ chờ đồng bộ trên tác vụ đọc file bất đồng bộ trong quá trình nạp profile. Cửa sổ hiện trước khi nạp workspace, và việc quét profile chạy ngoài luồng UI. Nếu đang dùng bản 1.0.0, build lại hoặc publish lại để thay toàn bộ các DLL đi kèm EXE.
 
-ModelDesk là ứng dụng WPF và CLI cho việc tải model từ Hugging Face, quản lý checkpoint cục bộ và sử dụng Python core GLM hiện có. GUI và CLI dùng chung các service C#; phần Python được giữ nguyên. Trình tải có thể tải repository ngoài hai profile GLM, nhưng việc tải đủ tệp không xác nhận model đó có thể suy luận bằng Python core này.
+ModelDesk là ứng dụng WPF và CLI cho việc tải model từ Hugging Face, quản lý checkpoint cục bộ và sử dụng Python core GLM hiện có. GUI và CLI dùng chung các service C#; Python/native core sở hữu việc suy luận. Trình tải có thể tải repository ngoài hai profile GLM, nhưng việc tải đủ tệp không xác nhận model đó có thể suy luận bằng Python core này.
 
 ## Mở ứng dụng
 

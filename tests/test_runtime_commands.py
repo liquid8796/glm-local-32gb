@@ -2,6 +2,7 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from glm_local import __main__ as cli, runtime_commands as commands, runtime_wor
 from glm_local.checkpoint_snapshot import write_json
 from glm_local.execution import FULL_MODEL_FLAGS
 from glm_local.winjob import InstalledLimits
+from glm_local.runtime_progress import RuntimeProgress
 
 
 class RuntimeCommandsTests(unittest.TestCase):
@@ -217,6 +219,58 @@ class RuntimeCommandsTests(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertEqual(self.latest()["status"], "ERROR")
                 self.assert_full_unverified(self.latest())
+
+    def test_windows_timeout_keeps_validated_last_stage_and_does_not_retry(self):
+        def run(command, *, cwd, limits, on_policy, timeout):
+            self.assertEqual(timeout, 300)
+            on_policy(InstalledLimits(70, 32_000_000_000, True, True, True))
+            directory = Path(command[-1]).parent
+            progress = RuntimeProgress(directory, settings(), "generate", heartbeat=False)
+            progress("projection_start", phase="prefill", token_index=0, token_count=2,
+                     layer_index=0, layer_count=2, tensor_name="model.layers.0.self_attn.q_a_proj.weight", rows=8, cols=16)
+            write_json(directory / "progress.json", progress.snapshot())
+            raise subprocess.TimeoutExpired(command, timeout)
+        with patch.object(commands.sys, "platform", "win32"), patch.object(commands, "run_local_process", side_effect=run) as launch, redirect_stdout(io.StringIO()):
+            code = commands.launch_runtime(self.root, settings(), "generate", {**self.parameters, "tokens": [1, 2], "timeout": 300})
+        self.assertEqual(code, 1)
+        launch.assert_called_once()
+        result = self.latest("generate")
+        self.assertEqual(result["status"], "ERROR")
+        self.assertEqual(result["error_type"], "TIMEOUT")
+        self.assertTrue(result["timed_out"])
+        self.assertEqual(result["timeout_seconds"], 300)
+        self.assertGreaterEqual(result["elapsed_seconds"], 0)
+        self.assertEqual(result["last_progress"]["tensor_name"], "model.layers.0.self_attn.q_a_proj.weight")
+        self.assertIn("Last stage: projection_start", result["error"])
+        self.assertTrue(result["job_policy_verified"])
+        self.assert_full_unverified(result)
+
+    def test_timeout_rejects_progress_from_another_run_or_checkpoint(self):
+        def run(command, *, on_policy, timeout, **kwargs):
+            on_policy(InstalledLimits(70, 32_000_000_000, True, True, True))
+            directory = Path(command[-1]).parent
+            progress = RuntimeProgress(directory, settings(), "generate", heartbeat=False)
+            value = progress.snapshot()
+            value["model_id"] = "wrong/checkpoint"
+            write_json(directory / "progress.json", value)
+            raise subprocess.TimeoutExpired(command, timeout)
+        with patch.object(commands.sys, "platform", "win32"), patch.object(commands, "run_local_process", side_effect=run), redirect_stdout(io.StringIO()):
+            self.assertEqual(commands.launch_runtime(self.root, settings(), "generate", {**self.parameters, "timeout": 300}), 1)
+        result = self.latest("generate")
+        self.assertNotIn("last_progress", result)
+        self.assertIn("last_progress_error", result)
+        self.assertTrue(result["timed_out"])
+        self.assert_full_unverified(result)
+
+    def test_generation_setup_error_retains_precise_last_stage(self):
+        with patch("glm_local.runtime_weights.RuntimeWeights", side_effect=RuntimeError("fixture cannot open weights")), \
+                patch.object(commands, "_kernels", return_value=(CpuKernel(), None, None)), redirect_stdout(io.StringIO()):
+            result, code = self.execute("generate", {**self.parameters, "tokens": [1, 2]})
+        self.assertEqual(code, 1)
+        self.assertEqual(result["last_progress"]["stage"], "weights_initializing")
+        self.assertEqual(result["last_progress"]["status"], "ERROR")
+        self.assertGreaterEqual(result["elapsed_seconds"], 0)
+        self.assert_full_unverified(result)
 
     def test_windows_missing_result_and_interrupted_worker_are_published(self):
         for outcome, expected_code in ((0, 1), (KeyboardInterrupt(), 130)):

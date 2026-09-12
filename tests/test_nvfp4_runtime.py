@@ -197,7 +197,10 @@ class Nvfp4RuntimeTests(unittest.TestCase):
                 self.assertFalse(stats["native_w4a4_parity_verified"])
                 for flag in ("full_model_loaded", "full_model_limits_verified", "inference_verified", "real_checkpoint_compatible"):
                     self.assertIs(stats[flag], False)
-            self.assertEqual(ledger.snapshot()["active_leases"], 0)
+            self.assertEqual(ledger.snapshot()["active_leases"], weights.stats()["row_band_cache"]["cached_bands"])
+            self.assertEqual(ledger.snapshot()["cpu"]["used_bytes"],
+                             plan.settings.runtime_headroom_bytes + weights.stats()["retained_weight_payload_bytes"])
+        self.assertEqual(ledger.snapshot()["active_leases"], 0)
         self.assertLessEqual(ledger.snapshot()["cpu"]["peak_bytes"], plan.ram_required_bytes)
 
     def test_hybrid_uses_scoped_nvfp4_contexts_and_gate_with_bounded_operations(self):

@@ -24,6 +24,18 @@ from .nvfp4_blocks import BLOCK, TILE, decode_e4m3_scale
 DEFAULT_DLL = Path(__file__).resolve().parent.parent / "build/nvfp4_cpu.dll"
 _PTX_PATH = Path(__file__).resolve().parent.parent / "native/nvfp4_matvec.ptx"
 MAX_EXPLICIT_DEVICE_BYTES = TILE * TILE // 2 + TILE * TILE // BLOCK + 2 * TILE * 4
+MAX_ROW_BAND_COLUMNS = 16384
+
+
+class _PreparedNVFP4Vector:
+    """One owned finite FP32 input buffer reused across the projection's row bands."""
+    __slots__ = ("buffer",)
+
+    def __init__(self, values):
+        self.buffer = (C.c_float * len(values))(*values)
+
+    def __len__(self):
+        return len(self.buffer)
 
 
 def validate_nvfp4_tile(packed, rows, cols, scales, vector, global_scale):
@@ -76,6 +88,11 @@ class NativeNVFP4CpuBackend:
             C.POINTER(C.c_float), C.c_size_t,
         ]
         dll.nvfp4_cpu_matvec_tile.restype = C.c_int
+        row_band = getattr(dll, "nvfp4_cpu_matvec_row_band", None)
+        if row_band is not None:
+            row_band.argtypes = list(dll.nvfp4_cpu_matvec_tile.argtypes)
+            row_band.restype = C.c_int
+        self.supports_nvfp4_row_band = row_band is not None
         info = dll.nvfp4_cpu_build_info()
         if not info:
             raise RuntimeError("Native NVFP4 DLL returned empty build metadata")
@@ -83,7 +100,8 @@ class NativeNVFP4CpuBackend:
             abi_version=1, build_info=info.decode("ascii"), weight_format="NVFP4_E2M1",
             activation_quantization="none", native_nvfp4_instructions=False,
             arithmetic="FP32 combined scales, weight decode, products and sequential reduction",
-            max_tile_rows=TILE, max_tile_cols=TILE, threads=1, full_model_inference=False)
+            max_tile_rows=TILE, max_tile_cols=TILE, threads=1, full_model_inference=False,
+            row_band_available=self.supports_nvfp4_row_band, max_row_band_columns=MAX_ROW_BAND_COLUMNS)
         self._dll = dll
 
     def _require_open(self):
@@ -109,6 +127,59 @@ class NativeNVFP4CpuBackend:
         result = list(output)
         if not all(math.isfinite(value) for value in result):
             raise ValueError("Native NVFP4 CPU backend returned a non-finite FP32 result")
+        return result
+
+    def prepare_nvfp4_vector(self, vector):
+        self._require_open()
+        if isinstance(vector, (str, bytes, bytearray)):
+            raise ValueError("NVFP4 vector must be an indexable numeric sequence")
+        try:
+            length = len(vector)
+            if not 16 <= length <= MAX_ROW_BAND_COLUMNS or length % BLOCK:
+                raise ValueError("NVFP4 row-band vector length must be a multiple of 16 up to 16384")
+            values = [_finite_float32(vector[index], f"vector[{index}]") for index in range(length)]
+        except (TypeError, IndexError, KeyError) as error:
+            raise ValueError("NVFP4 vector must be an indexable finite numeric sequence") from error
+        return _PreparedNVFP4Vector(values)
+
+    def matvec_nvfp4_row_band(self, packed, rows, cols, scales, vector, global_scale):
+        dll = self._require_open()
+        if type(rows) is not int or not 1 <= rows <= TILE:
+            raise ValueError("NVFP4 row band must contain 1..128 rows")
+        if type(cols) is not int or not 16 <= cols <= MAX_ROW_BAND_COLUMNS or cols % BLOCK:
+            raise ValueError("NVFP4 row-band columns must be a multiple of 16 up to 16384")
+        if type(packed) is not bytes or len(packed) != rows * (cols // 2):
+            raise ValueError("NVFP4 row-band packed byte count differs from shape")
+        if type(scales) is not bytes or len(scales) != rows * (cols // BLOCK):
+            raise ValueError("NVFP4 row-band scale byte count differs from shape")
+        # Both byte scans run in C; valid scales are exactly codes0..126.
+        # The native boundary also validates every byte independently.
+        if not scales.isascii() or b"\x7f" in scales:
+            for code in scales:
+                decode_e4m3_scale(code)
+        prepared = vector if isinstance(vector, _PreparedNVFP4Vector) else self.prepare_nvfp4_vector(vector)
+        if not isinstance(prepared.buffer, C.Array) or prepared.buffer._type_ is not C.c_float:
+            raise ValueError("Prepared NVFP4 vector must own a float32 native buffer")
+        if len(prepared) != cols:
+            raise ValueError("NVFP4 vector length must equal row-band columns")
+        scale = _finite_float32(global_scale, "NVFP4 global weight scale", positive=True)
+        function = getattr(dll, "nvfp4_cpu_matvec_row_band", None)
+        if function is None:
+            raise RuntimeError("NVFP4 CPU DLL lacks row-band batching. Run build-native.bat")
+        weights_buffer = (C.c_uint8 * len(packed)).from_buffer_copy(packed)
+        scales_buffer = (C.c_uint8 * len(scales)).from_buffer_copy(scales)
+        output = (C.c_float * rows)()
+        status = function(weights_buffer, len(packed), rows, cols, scales_buffer, len(scales),
+                          prepared.buffer, cols, scale, output, rows)
+        if status == 1:
+            raise ValueError("Native NVFP4 CPU backend rejected row-band arguments")
+        if status == 2:
+            raise ValueError("Native NVFP4 row-band arithmetic encountered a non-finite FP32 value")
+        if status != 0:
+            raise RuntimeError(f"Native NVFP4 row-band backend returned unknown status {status}")
+        result = list(output)
+        if not all(math.isfinite(value) for value in result):
+            raise ValueError("Native NVFP4 row band returned non-finite FP32 results")
         return result
 
     def close(self):

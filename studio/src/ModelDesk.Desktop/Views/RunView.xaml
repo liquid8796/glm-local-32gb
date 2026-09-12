@@ -52,6 +52,7 @@
             </Grid>
             <TextBlock Text="Timeout (giây)" Style="{StaticResource FieldLabel}" />
             <TextBox Text="{Binding Timeout}" />
+            <TextBlock Text="Giới hạn cho cả lượt chạy: khởi tạo, xử lý prompt và sinh token. Nhật ký bên dưới hiển thị giai đoạn đang thực hiện." Style="{StaticResource Muted}" FontSize="12" Margin="0,7,0,0" />
             <Button Content="1. Lập kế hoạch bộ nhớ" Command="{Binding PlanCommand}" Margin="0,26,0,10" />
             <Button Content="2. Chạy model" Command="{Binding GenerateCommand}" Style="{StaticResource Primary}" />
             <TextBlock Text="Kết quả và nhật ký xuất hiện ở thanh tác vụ bên dưới. Có thể dừng tác vụ đang chạy bất cứ lúc nào." Style="{StaticResource Muted}" FontSize="12" Margin="0,18,0,0" />

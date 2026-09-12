@@ -114,6 +114,26 @@ class ResidencyTests(unittest.TestCase):
             build_plan(self.config, replace(hybrid, vram_budget_bytes=gpu.vram_required_bytes - 1))
         self.assertEqual(caught.exception.device, "cuda")
 
+    def test_row_band_cache_is_included_in_estimate_and_exact_budget(self):
+        from glm_local.runtime_io import DEFAULT_ROW_BAND_CACHE_BYTES
+        plan = build_plan(self.config, self.settings)
+        self.assertEqual(dict(plan.cpu_components)["encoded_row_band_cache"], DEFAULT_ROW_BAND_CACHE_BYTES)
+        self.assertEqual(plan.to_dict()["streaming"]["max_encoded_row_band_cache_bytes"], DEFAULT_ROW_BAND_CACHE_BYTES)
+        # A budget that would fit without retained encoded bands must now reject.
+        with self.assertRaises(BudgetExceededError):
+            build_plan(self.config, replace(self.settings,
+                ram_budget_bytes=plan.ram_required_bytes - DEFAULT_ROW_BAND_CACHE_BYTES))
+
+    def test_nvfp4_batch_scratch_is_reserved_in_the_plan(self):
+        from glm_local.nvfp4_execution import NVFP4_ROW_BAND_SCRATCH_BYTES
+        from test_nvfp4_schema import nvfp4_config
+        config = {**self.config, **nvfp4_config()}
+        plan = build_plan(config, self.settings)
+        self.assertEqual(dict(plan.cpu_components)["nvfp4_row_band_scratch"], NVFP4_ROW_BAND_SCRATCH_BYTES)
+        with self.assertRaises(BudgetExceededError):
+            build_plan(config, replace(self.settings,
+                ram_budget_bytes=plan.ram_required_bytes - NVFP4_ROW_BAND_SCRATCH_BYTES))
+
     def test_context_and_generation_bounds(self):
         plan = build_plan(self.config, self.settings, prompt_tokens=28)
         plan.validate_prompt(32, max_new_tokens=0)

@@ -1,8 +1,9 @@
 """Experimental full-catalogue, local-only streamed checkpoint weight access.
 
 Opening checks complete metadata and every local shard header. Weight payloads
-are read only on demand in <=64-KiB reads and <=128-square tiles. No weight
-matrix or expert bank is retained. Local header evidence does not authenticate
+are read on demand in <=64-KiB reads, with bounded encoded row-band reuse and
+native batching of <=128-square arithmetic tiles. No complete weight matrix
+or expert bank is retained. Local header evidence does not authenticate
 the contents of all payloads or establish full-model numerical/resource limits.
 """
 from array import array
@@ -182,6 +183,9 @@ class FullCatalogueReader(SelectedCatalogueReader):
         return ProjectionDescriptor(weight, scale, tuple(self._proofs[s] for s in sorted({weight.shard, scale.shard})),
                                     **self._provenance)
 
+    def assert_tensor_unchanged(self, name):
+        self._reader(self._selected[name].shard)._assert_unchanged()
+
     def stats(self):
         return {**super().stats(), "complete_catalogue_bound": True, "local_config_index_verified": True,
                 "local_all_shard_headers_verified": True, "full_model_loaded": False,
@@ -212,7 +216,13 @@ class RuntimeWeights:
             raise ValueError("Runtime backend must be cpu or hybrid")
         if backend == "hybrid" and gate is None:
             raise ValueError("Hybrid runtime requires an explicit GPU telemetry gate")
-        self._reader = FullCatalogueReader(root, settings, model_directory, max_open_shards=max_open_shards)
+        from .runtime_io import RowBandCacheReader
+        source = FullCatalogueReader(root, settings, model_directory, max_open_shards=max_open_shards)
+        try:
+            self._reader = RowBandCacheReader(source, ledger=ledger)
+        except BaseException:
+            source.close()
+            raise
         self.config, self._settings = deepcopy(self._reader.config), dict(settings)
         self.backend, self._gpu, self._gate, self._ledger, self._plan = backend, gpu, gate, ledger, plan
         self._cpu, self._owns_cpu, self._closed = cpu, cpu is None, False
@@ -220,7 +230,7 @@ class RuntimeWeights:
         self._quant_format = quantization_format(self.config)
         self._counts = dict(linear_calls=0, vector_calls=0, embedding_calls=0, cpu_tiles=0, gpu_tiles=0,
                             max_decoded_dense_tile_bytes=0, scoped_cuda_contexts=0,
-                            maximum_context_launch_budget=0)
+                            maximum_context_launch_budget=0, native_dense_tiles=0, scalar_dense_tiles=0)
         try:
             if self._cpu is None:
                 self._cpu = NativeCpuBackend()
@@ -318,15 +328,28 @@ class RuntimeWeights:
                     for col in range(0, cols, BLOCK):
                         nc = min(BLOCK, cols - col)
                         raw = self._reader.read_matrix_tile(name, row, col, nr, nc)
-                        weights = _decode(raw, info.dtype)
-                        self._counts["max_decoded_dense_tile_bytes"] = max(
-                            self._counts["max_decoded_dense_tile_bytes"], len(weights) * 4)
-                        for r in range(nr):
-                            subtotal = 0.0
-                            for c in range(nc):
-                                product = _finite_float32(weights[r * nc + c] * vector[col + c], "dense product")
-                                subtotal = _finite_float32(subtotal + product, "dense reduction")
-                            result[row + r] = _finite_float32(result[row + r] + subtotal, "dense accumulation")
+                        kernel = getattr(self._cpu, "matvec_dense_tile", None)
+                        if callable(kernel):
+                            output = kernel(raw, nr, nc, vector[col:col + nc], info.dtype)
+                            if not hasattr(output, "__len__") or len(output) != nr:
+                                raise ValueError("Native dense kernel returned an invalid output length")
+                            for r in range(nr):
+                                subtotal = _finite_float32(output[r], "dense kernel output")
+                                result[row + r] = _finite_float32(result[row + r] + subtotal, "dense accumulation")
+                            self._counts["native_dense_tiles"] += 1
+                        else:
+                            # Compatibility for explicitly injected reference/test adapters.
+                            # Normal runtime uses NativeCpuBackend and its bounded C kernel.
+                            weights = _decode(raw, info.dtype)
+                            self._counts["max_decoded_dense_tile_bytes"] = max(
+                                self._counts["max_decoded_dense_tile_bytes"], len(weights) * 4)
+                            for r in range(nr):
+                                subtotal = 0.0
+                                for c in range(nc):
+                                    product = _finite_float32(weights[r * nc + c] * vector[col + c], "dense product")
+                                    subtotal = _finite_float32(subtotal + product, "dense reduction")
+                                result[row + r] = _finite_float32(result[row + r] + subtotal, "dense accumulation")
+                            self._counts["scalar_dense_tiles"] += 1
                         self._counts["cpu_tiles"] += 1
         self._counts["linear_calls"] += 1
         return result

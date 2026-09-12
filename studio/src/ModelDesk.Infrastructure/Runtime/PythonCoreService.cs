@@ -147,10 +147,11 @@ public sealed class PythonCoreService : IPythonCoreService
             }
         }
         var hints = reportHints.Reverse().ToArray();
-        var reportPath = await CaptureFreshReport(root, reportDirectory, runDirectory,
+        var capturedReport = await CaptureFreshReport(root, reportDirectory, runDirectory,
             cancelled ? hints : hints.Concat(expected), prior, started, operation.Id,
             RequiredString(parsedConfig.RootElement, "model_id"), RequiredString(parsedConfig.RootElement, "revision"), cancelled, expected);
-        var result = new CoreRunResult(id, exitCode, cancelled, logPath, reportPath, started, DateTimeOffset.UtcNow);
+        var result = new CoreRunResult(id, exitCode, cancelled, logPath, capturedReport.Path, started, DateTimeOffset.UtcNow,
+            TimedOut: !cancelled && exitCode == 1 && capturedReport.TimedOut);
         await LocalFiles.AtomicWriteAsync(Path.Combine(runDirectory, "run.json"), JsonSerializer.SerializeToUtf8Bytes(result, LocalFiles.JsonOptions));
         return result;
     }
@@ -224,7 +225,7 @@ public sealed class PythonCoreService : IPythonCoreService
         if (line.Length > 0 || oversized) await publish(line.ToString() + (oversized ? " [line truncated]" : ""), error);
     }
 
-    private static async Task<string?> CaptureFreshReport(string root, string reportDirectory, string runDirectory, IEnumerable<string> paths,
+    private static async Task<(string? Path, bool TimedOut)> CaptureFreshReport(string root, string reportDirectory, string runDirectory, IEnumerable<string> paths,
         Dictionary<string, (DateTime LastWrite, long Length)> prior, DateTimeOffset started, string operation,
         string modelId, string revision, bool cancelled, string[] sharedLatestPaths)
     {
@@ -252,11 +253,14 @@ public sealed class PythonCoreService : IPythonCoreService
                     (reportedAction.ValueKind != JsonValueKind.String || reportedAction.GetString() != action)) continue;
                 var saved = Path.Combine(runDirectory, "report.json");
                 await LocalFiles.AtomicWriteAsync(saved, bytes);
-                return saved;
+                var timedOut = report.TryGetProperty("timed_out", out var timeout) && timeout.ValueKind == JsonValueKind.True
+                    && report.TryGetProperty("error_type", out var kind) && kind.ValueKind == JsonValueKind.String && kind.GetString() == "TIMEOUT"
+                    && report.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.String && status.GetString() == "ERROR";
+                return (saved, timedOut);
             }
             catch (Exception exception) when (exception is IOException or ArgumentException or JsonException or UnauthorizedAccessException) { }
         }
-        return null;
+        return (null, false);
     }
 
     private static IEnumerable<string> ExpectedReports(string root, string directory, string operation)

@@ -1,6 +1,6 @@
 # ModelDesk — GUI C# và Python core GLM
 
-Mở `ModelDesk.sln` bằng Visual Studio 2026 hoặc chạy `build-studio.bat -Test`. GUI WPF/.NET 10 có bảy tab quản lý model, kiểm chứng, Hugging Face, tải xuống, báo cáo và cài đặt; CLI dùng chung dịch vụ với GUI. Python/native core vẫn giữ nguyên. [Hướng dẫn ModelDesk](studio/README.md) · [Kiến trúc source](studio/ARCHITECTURE.md).
+Mở `ModelDesk.sln` bằng Visual Studio 2026 hoặc chạy `build-studio.bat -Test`. GUI WPF/.NET 10 có bảy tab quản lý model, kiểm chứng, Hugging Face, tải xuống, báo cáo và cài đặt; CLI dùng chung dịch vụ với GUI. GUI/CLI gọi Python/native core qua cùng các entrypoint. [Hướng dẫn ModelDesk](studio/README.md) · [Kiến trúc source](studio/ARCHITECTURE.md).
 
 ```powershell
 .\modeldesk.bat
@@ -13,7 +13,9 @@ Trình tải hỗ trợ chia đoạn cho file lớn, tối đa bốn kết nối
 
 ## Python core — đọc trọng số FP8/NVFP4 theo khối
 
-**Trạng thái 0.10.0: đã thêm profile NVFP4 và đặt làm mặc định; profile FP8 cũ được giữ riêng.**
+**Trạng thái 0.10.1: core tối ưu CPU và chẩn đoán timeout, đi kèm ModelDesk 1.0.3.** Phép nhân BF16/F16/F32 theo tile chạy bằng native CPU; NVFP4 CPU gom các tile trong một row band để giảm số lần gọi Python, giữ thứ tự tính FP32. Planner hạch toán bộ đệm đọc tối đa 8 MiB và scratch NVFP4 5 MiB. Lượt chạy có nhật ký tiến độ và lưu giai đoạn cuối khi timeout. Cần chạy `build-native.bat` khi cập nhật source để có các entrypoint native mới.
+
+Profile NVFP4 vẫn là mặc định; profile FP8 cũ được giữ riêng. Kiểm chứng full-checkpoint và tốc độ thực tế là các bước riêng với kiểm thử kernel/metadata.
 
 Model đang làm việc: `dealignai/GLM-5.3-ABLITERATED-NVFP4`, revision `371bdb985d0124e76348c91e4a8fcf3a9d719d09`. Đã xác minh đủ **282 header, 232.385 tensor, 57.600 bộ weight/scale NVFP4**; metadata và architecture PASS. Reader xử lý expert U8 đóng gói E2M1, scale E4M3 theo nhóm16 và scale toàn tensor F32; attention/shared/dense/MTP giữ BF16.
 
@@ -29,7 +31,7 @@ Runtime giải mã trọng số NVFP4 rồi tính FP32 trên CPU/CUDA, phù hợ
 .\glm.bat --profile fp8 doctor
 ```
 
-Cần build lại một lần để có `nvfp4_cpu.dll`; PTX được driver nạp trực tiếp. [Hướng dẫn NVFP4 và chuyển profile](docs/NVFP4.md). Báo cáo NVFP4 nằm trong `reports/nvfp4/`; dữ liệu và báo cáo FP8 cũ vẫn giữ nguyên. Lượt này chỉ tải metadata và một projection nhỏ, không tải toàn bộ checkpoint ~464,82GB.
+Cần build lại khi cập nhật native kernels; PTX được driver nạp trực tiếp. [Hướng dẫn NVFP4 và chuyển profile](docs/NVFP4.md). Báo cáo NVFP4 nằm trong `reports/nvfp4/`; dữ liệu và báo cáo FP8 cũ vẫn giữ nguyên. Nghiệm thu bản 0.10.0 chỉ tải metadata và một projection nhỏ; người dùng đã hoàn tất tải checkpoint ở lượt sau.
 
 ## Mốc FP8 trước đây — v0.9.0
 

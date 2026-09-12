@@ -1,8 +1,12 @@
 # Current Memory Snapshot — GLM Local 32GB
 
-Current release: v0.10.0. Historical verification artifacts retain their original release and dependency versions.
+Current release: v0.10.1. Historical verification artifacts retain their original release and dependency versions.
 
-Active default profile is nvfp4: dealignai/GLM-5.3-ABLITERATED-NVFP4 pinned371bdb985d0124e76348c91e4a8fcf3a9d719d09. User set the former FP8 model aside; it remains selectable with --profile fp8. Code and small-check scope persists; no full464.82GB download.
+Active default profile is nvfp4: dealignai/GLM-5.3-ABLITERATED-NVFP4 pinned371bdb985d0124e76348c91e4a8fcf3a9d719d09. User set the former FP8 model aside; it remains selectable with --profile fp8. The user completed the NVFP4 download; on2026-09-13 all282 shard names/sizes matched the pinned manifest and the tokenizer passed at the selected E: directory. Full payload hashes were not reread in that inventory.
+
+Core0.10.1 adds native BF16/F16/F32 tile matvecs preserving sequential FP32 arithmetic, bounded8MiB encoded row-band caching counted by the planner/ledger, and bounded stage progress retained on timeout. The user's300-second CPU generation expired; elapsed time alone does not establish corruption or a deadlock. Full-model correctness and throughput remain distinct from metadata and kernel checks.
+
+Post-fix real diagnostic: context128, CPU, promptHi (one input token), one requested output and1800s timeout completed in1033.816s. Output154820 isEOS/endoftext, decoded text empty. Peak working set1,179,160,576B and private commit1,171,648,512B; no numerical/chat/provider acceptance. The earlier300s probe stopped during layer21/78. CPU NVFP4 row-band batching additionally leases5MiB scratch. Full suites:788 Python and146 C# tests passed. See verification/runtime-timeout-v0.10.1.md.
 
 NVFP4 snapshot is docs/models/abliterated-nvfp4/model-metadata.json; reports are under reports/nvfp4. All282 headers/232,385 tensors/57,600 NVFP4 quadruples verified, architecture has zero findings. Metadata HTTP timed out after279headers; new --resume reverified cache and fetched only3missingheaders. Original evidence is unchanged.
 

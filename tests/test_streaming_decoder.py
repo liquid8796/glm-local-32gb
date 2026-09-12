@@ -142,6 +142,42 @@ def fixture(config=None, **options):
 
 
 class StreamingDecoderTests(unittest.TestCase):
+    def test_optional_progress_reports_stages_without_changing_logits_or_cache(self):
+        events = []
+        observer = lambda stage, **fields: events.append((stage, fields))
+        observed, _, _ = fixture(progress=observer)
+        plain, _, _ = fixture()
+        with observed, plain:
+            for token in (1, 4, 2):
+                self.assertEqual(observed.step(token), plain.step(token))
+                self.assertEqual(observed.last_trace, plain.last_trace)
+                self.assertEqual(observed._cache, plain._cache)
+            observed.reset(); plain.reset(); events.clear()
+            self.assertEqual(observed.generate([1, 4], 3, []), plain.generate([1, 4], 3, []))
+        stages = [stage for stage, _ in events]
+        self.assertIn("prefill", stages)
+        self.assertIn("decode", stages)
+        self.assertIn("projection_start", stages)
+        self.assertIn("projection_complete", stages)
+        self.assertEqual(stages[-1], "generation_complete")
+        projections = [fields for stage, fields in events if stage == "projection_start"]
+        self.assertTrue(all("tensor_name" in fields and "rows" in fields and "cols" in fields for fields in projections))
+        self.assertTrue(all("token" not in fields and "token_ids" not in fields and "text" not in fields for _, fields in events))
+
+    def test_failed_projection_has_start_event_without_false_completion(self):
+        events = []
+        decoder, weights, _ = fixture(progress=lambda stage, **fields: events.append((stage, fields)))
+        name = "model.layers.0.self_attn.q_a_proj.weight"
+        weights.fail_name = name
+        with decoder:
+            with self.assertRaisesRegex(RuntimeError, "injected projection failure"):
+                decoder.step(1)
+            self.assertEqual(decoder.position, 0)
+        self.assertEqual(events[-1][0], "projection_start")
+        self.assertEqual(events[-1][1]["tensor_name"], name)
+        with self.assertRaisesRegex(DecoderError, "progress"):
+            fixture(progress=True)
+
     def test_actual_cache_arrays_equal_plan_and_shared_indexer_is_not_loaded(self):
         decoder, weights, plan = fixture()
         self.addCleanup(decoder.close)
@@ -406,9 +442,12 @@ class StreamingLocalShardTests(unittest.TestCase):
                 self.assertGreater(stats["cpu_tiles"], 0)
                 self.assertLessEqual(stats["peak_open_shards"], 2)
                 self.assertLessEqual(stats["max_actual_read_bytes"], 65536)
-                self.assertEqual(stats["retained_weight_payload_bytes"], 0)
+                self.assertLessEqual(stats["retained_weight_payload_bytes"], 8 * 1024**2)
                 self.assertFalse(stats["full_model_limits_verified"])
-            self.assertEqual(ledger.snapshot()["active_leases"], 0)
+            self.assertEqual(ledger.snapshot()["active_leases"], weights.stats()["row_band_cache"]["cached_bands"])
+            self.assertEqual(ledger.snapshot()["cpu"]["used_bytes"],
+                             plan.settings.runtime_headroom_bytes + weights.stats()["retained_weight_payload_bytes"])
+        self.assertEqual(ledger.snapshot()["active_leases"], 0)
         self.assertLessEqual(ledger.snapshot()["cpu"]["peak_bytes"], plan.ram_required_bytes)
 
     @unittest.skipUnless(os.environ.get("GLM_TEST_NATIVE") == "1"

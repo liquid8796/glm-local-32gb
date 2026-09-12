@@ -84,3 +84,56 @@ NVFP4_EXPORT int nvfp4_cpu_matvec_tile(
     }
     return 0;
 }
+
+/* Additive ABI1 entry point. A bounded encoded row band batches the Python
+ * calls, but each row still reduces128-column tiles independently and adds
+ * those partials in order, exactly as the original tile executor does. */
+NVFP4_EXPORT int nvfp4_cpu_matvec_row_band(
+    const uint8_t *packed, size_t packed_count, int rows, int cols,
+    const uint8_t *scales, size_t scale_count,
+    const float *vector, size_t vector_count, float global_scale,
+    float *output, size_t output_count)
+{
+    size_t index;
+    int row, col, tile, group;
+    if (packed == NULL || scales == NULL || vector == NULL || output == NULL ||
+        rows < 1 || rows > 128 || cols < 16 || cols > 16384 || cols % 16 != 0 ||
+        !isfinite(global_scale) || global_scale <= 0.0f) {
+        return 1;
+    }
+    if (packed_count != (size_t)rows * (size_t)(cols / 2) ||
+        scale_count != (size_t)rows * (size_t)(cols / 16) ||
+        vector_count != (size_t)cols || output_count != (size_t)rows) {
+        return 1;
+    }
+    for (index = 0; index < scale_count; ++index) {
+        if ((scales[index] & 0x7fu) == 0x7fu) { return 2; }
+        if ((scales[index] & 0x80u) != 0u) { return 1; }
+    }
+    for (col = 0; col < cols; ++col) {
+        if (!isfinite(vector[col])) { return 2; }
+    }
+    for (row = 0; row < rows; ++row) {
+        float total = 0.0f;
+        for (tile = 0; tile < cols; tile += 128) {
+            int stop = tile + 128 < cols ? tile + 128 : cols;
+            float partial = 0.0f;
+            for (group = tile; group < stop; group += 16) {
+                float combined = decode_scale(scales[(size_t)row * (size_t)(cols / 16) + (size_t)(group / 16)]) * global_scale;
+                if (!isfinite(combined)) { return 2; }
+                for (col = group; col < group + 16; ++col) {
+                    uint8_t byte = packed[(size_t)row * (size_t)(cols / 2) + (size_t)(col / 2)];
+                    unsigned int code = ((unsigned int)byte >> ((col % 2) * 4)) & 15u;
+                    float weight = decode_e2m1(code) * combined;
+                    float product = weight * vector[col];
+                    partial = partial + product;
+                    if (!isfinite(weight) || !isfinite(product) || !isfinite(partial)) { return 2; }
+                }
+            }
+            total = total + partial;
+            if (!isfinite(total)) { return 2; }
+        }
+        output[row] = total;
+    }
+    return 0;
+}

@@ -146,7 +146,7 @@ class RuntimeWeightsTests(unittest.TestCase):
             self.assertLessEqual(stats["peak_open_shards"], 2)
             self.assertLessEqual(stats["max_actual_read_bytes"], 65536)
             self.assertLessEqual(stats["max_decoded_dense_tile_bytes"], 128 * 128 * 4)
-            self.assertEqual(stats["retained_weight_payload_bytes"], 0)
+            self.assertLessEqual(stats["retained_weight_payload_bytes"], 8 * 1024**2)
             for name in ("full_model_loaded", "inference_verified", "payload_values_verified", "real_checkpoint_compatible"):
                 self.assertFalse(stats[name])
 

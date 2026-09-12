@@ -114,7 +114,7 @@ class StreamingDecoder:
     """
 
     def __init__(self, config, weights, plan, *, linear=None, ledger=None,
-                 attention_topk=None, model_id=None, revision=None):
+                 attention_topk=None, model_id=None, revision=None, progress=None):
         if not isinstance(plan, ResidencyPlan):
             raise DecoderError("A validated ResidencyPlan is required before decoder allocation")
         try:
@@ -132,6 +132,8 @@ class StreamingDecoder:
             raise DecoderError("Weight source configuration differs from the decoder configuration")
         if attention_topk is not None and not callable(attention_topk):
             raise DecoderError("attention_topk must be callable")
+        if progress is not None and not callable(progress):
+            raise DecoderError("progress must be a callable stage observer")
         if ledger is not None and not isinstance(ledger, ReservationLedger):
             raise DecoderError("ledger must be ReservationLedger")
         self.ledger = ledger if ledger is not None else plan.allocator(include_cache=False)
@@ -148,6 +150,7 @@ class StreamingDecoder:
         self.weights = weights
         self._linear = project
         self._attention_topk = attention_topk or _topk
+        self._progress = progress
         self._position = 0
         self._closed = False
         self.last_trace = None
@@ -160,6 +163,7 @@ class StreamingDecoder:
         self._width = config["kv_lora_rank"] + config["qk_rope_head_dim"]
         self._scratch_bytes = sum(value for key, value in plan.cpu_components
                                   if key in ("token_activations", "attention_and_selection_scratch"))
+        self._report_progress("decoder_cache_allocation", layer_count=plan.layer_count)
         self._cache_lease = self.ledger.reserve(plan.cache_bytes, label="decoder compressed cache")
         try:
             # array multiplication allocates a single compact payload, unlike
@@ -172,6 +176,7 @@ class StreamingDecoder:
             }
             if self.cache_bytes != plan.cache_bytes:
                 raise DecoderError("Allocated cache payload differs from the residency estimate")
+            self._report_progress("decoder_ready", layer_count=plan.layer_count)
         except BaseException:
             self.close()
             raise
@@ -198,6 +203,11 @@ class StreamingDecoder:
             raise DecoderError("Token ID must be an integer in the configured vocabulary")
         return token
 
+    def _report_progress(self, stage, **fields):
+        """Optional diagnostics only; never includes token IDs, text or weights."""
+        if self._progress is not None:
+            self._progress(stage, **fields)
+
     def _vector(self, name, length):
         return _compact(self.weights.vector(name), length, name)
 
@@ -207,7 +217,10 @@ class StreamingDecoder:
             raise DecoderError(f"Projection shape mismatch for {name}")
         if any(not math.isfinite(value) for value in values):
             raise DecoderError(f"Projection input contains nonfinite values for {name}")
-        return _compact(self._linear(name, values), shape[0], name)
+        self._report_progress("projection_start", position=self._position, tensor_name=name, rows=shape[0], cols=shape[1])
+        result = _compact(self._linear(name, values), shape[0], name)
+        self._report_progress("projection_complete", position=self._position, tensor_name=name, rows=shape[0], cols=shape[1])
+        return result
 
     def _norm(self, name, values, epsilon):
         gain = self._vector(name, len(values))
@@ -345,10 +358,13 @@ class StreamingDecoder:
         self._token(token)
         if self._position >= self.plan.settings.context_tokens:
             raise DecoderError("Decoder context is full; reset before a new sequence")
+        self._report_progress("token_start", position=self._position)
         with self.ledger.reserve(self._scratch_bytes, label="decoder token scratch"):
+            self._report_progress("embedding", position=self._position)
             hidden = _compact(self.weights.embedding(token), self.config["hidden_size"], "embedding")
             previous = None
             for layer in range(self.plan.layer_count):
+                self._report_progress("layer_start", position=self._position, layer_index=layer, layer_count=self.plan.layer_count)
                 prefix = f"model.layers.{layer}."
                 normalized = self._norm(prefix + "input_layernorm.weight", hidden,
                                         self.config["rms_norm_eps"])
@@ -359,11 +375,14 @@ class StreamingDecoder:
                 mlp = (self._ffn(prefix + "mlp.", normalized) if self._mlps[layer] == "dense"
                        else self._moe(layer, normalized))
                 hidden = array("f", (base + delta for base, delta in zip(hidden, mlp)))
+                self._report_progress("layer_complete", position=self._position, layer_index=layer, layer_count=self.plan.layer_count)
+            self._report_progress("output_head", position=self._position)
             normalized = self._norm("model.norm.weight", hidden, self.config["rms_norm_eps"])
             logits = self._project("lm_head.weight", normalized)
             self.last_trace = {"position": self._position, "token": token,
                                "backbone_layers": self.plan.layer_count,
                                "last_selected_indices": list(previous)}
+            self._report_progress("token_complete", position=self._position + 1)
             self._position += 1
             return logits
 
@@ -389,15 +408,21 @@ class StreamingDecoder:
         if not isinstance(eos, (list, tuple, set)) or len(eos) > 256:
             raise DecoderError("EOS IDs must be at most 256 configured token IDs")
         stop = {self._token(token) for token in eos}
-        for token in prompt_ids:
+        for index, token in enumerate(prompt_ids):
+            self._report_progress("prefill", phase="prefill", token_index=index, token_count=len(prompt_ids),
+                                  prompt_tokens=len(prompt_ids), requested_new_tokens=generated_count, generated_tokens=0)
             logits = self.step(token)
         generated = []
         for index in range(generated_count):
             token = max(range(len(logits)), key=lambda item: (logits[item], -item))
             generated.append(token)
+            self._report_progress("generated_token", generated_tokens=len(generated))
             if token in stop or index + 1 == generated_count:
                 break
+            self._report_progress("decode", phase="decode", token_index=index, token_count=max(0, generated_count - 1),
+                                  generated_tokens=len(generated))
             logits = self.step(token)
+        self._report_progress("generation_complete", generated_tokens=len(generated), prompt_tokens=len(prompt_ids))
         return generated
 
     def reset(self):

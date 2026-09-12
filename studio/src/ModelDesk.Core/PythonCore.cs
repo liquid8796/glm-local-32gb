@@ -36,9 +36,9 @@ public sealed record CoreRunRequest(AppSettings Settings, string Operation,
     IReadOnlyList<string> Arguments, string? ConfigPath = null);
 public sealed record CoreOutput(DateTimeOffset Timestamp, string Text, bool IsError = false);
 public sealed record CoreRunResult(string RunId, int ExitCode, bool Cancelled, string LogPath,
-    string? ReportPath, DateTimeOffset StartedAt, DateTimeOffset FinishedAt)
+    string? ReportPath, DateTimeOffset StartedAt, DateTimeOffset FinishedAt, bool TimedOut = false)
 {
-    public string Status => Cancelled ? "Cancelled" : ExitCode == 0 ? "Completed" : ExitCode == 2 ? "Needs review" : "Failed";
+    public string Status => Cancelled ? "Cancelled" : TimedOut ? "Timed out" : ExitCode == 0 ? "Completed" : ExitCode == 2 ? "Needs review" : "Failed";
 }
 
 public interface IPythonCoreService

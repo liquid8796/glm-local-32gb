@@ -1,6 +1,10 @@
-# GLM NVFP4 — 0.10.0
+# GLM NVFP4 — 0.10.1
 
 Đã thêm `dealignai/GLM-5.3-ABLITERATED-NVFP4` và đặt làm profile mặc định. Revision cố định: `371bdb985d0124e76348c91e4a8fcf3a9d719d09`. Profile FP8 trước đây được giữ tại `config/models/cybersecurity-fp8.json`; NVFP4 tại `config/models/abliterated-nvfp4.json`.
+
+Core 0.10.1 chạy dense BF16/F16/F32 bằng native CPU với cùng thứ tự nhân/cộng FP32 theo tile. Reader giữ tối đa 8 MiB các row band còn mã hóa, đọc chúng bằng các lần I/O không quá 64 KiB; không giữ toàn matrix hay expert bank. Bộ đệm được hạch toán trong planner và allocation ledger. `generate` ghi tiến độ khởi tạo/prefill/decode/layer/projection ra stdout và `progress.json`; khi timeout, `result.json` có `timed_out`, `error_type`, thời gian đã chạy và giai đoạn cuối hợp lệ. Đây là tiến độ thực thi, chưa phải API streaming token.
+
+NVFP4 trên CPU gom tối đa 128 hàng × 16.384 cột logic vào một lần gọi native; bên trong vẫn tính các subtotal 128 cột và cộng FP32 đúng thứ tự cũ. Payload được đọc thành các đoạn không quá 64 KiB, xử lý rồi giải phóng từng band. Scratch 5 MiB được lease riêng và cộng vào planner. Đường hybrid và kernel tile cũ vẫn giữ nguyên; mức tăng tốc của một kernel không xác nhận tốc độ end-to-end.
 
 ## Chạy trên máy này
 
@@ -45,12 +49,14 @@ Kernel được kiểm tra với đủ 256 giá trị byte đóng gói, 127 scal
 
 Projection thật logical 2048×6144 đạt sai số 0; CPU/GPU xử lý 384 tile mỗi bên. Tổng payload mẫu tải về là 7.077.896 byte; không giữ matrix đã giải mã. Bộ hồi quy Windows cuối đạt **728/728 test**, không skip. [Bằng chứng bản này](verification/nvfp4-v0.10.0.json).
 
-Chưa tải full checkpoint theo lựa chọn trước của người dùng. `generate` cần config/index và đủ 282 shard cục bộ đúng revision; nó không tải model ngầm. Ví dụ khi đã có dữ liệu:
+`generate` cần config/index và đủ 282 shard cục bộ đúng revision; nó không tải model ngầm. Thư mục người dùng đã tải đủ được kiểm tra tên/dung lượng vào 2026-09-13, và tokenizer tại đó PASS; kiểm tra này không xác minh lại hash toàn bộ payload hoặc chứng minh full-model inference. Ví dụ khi đã có dữ liệu:
 
 ```powershell
-.\glm.bat --profile nvfp4 generate --model-directory "E:\Models\GLM-5.3-ABLITERATED-NVFP4" --prompt "Xin chào" --context 128 --generate 4 --backend hybrid
+.\glm.bat --profile nvfp4 generate --model-directory "E:\Models\GLM-5.3-ABLITERATED-NVFP4" --prompt "Hi" --context 128 --generate 1 --backend cpu --timeout 1800
 ```
 
 E: là đường dẫn ví dụ; không có thao tác tải full model ở đó. Full-model output/BF16-W4A4 parity, resident RAM ≤32 GB, GPU trung bình 60% và throughput chưa nghiệm thu; doctor vẫn BLOCKED. Job Object giới hạn commit và pacing là heuristic. MTP có kiểm tra cấu trúc nhưng không thực hiện speculative decoding.
+
+Đây là lệnh chẩn đoán, chưa phải cấu hình chat: trên i7-11800H, core 0.10.1 xử lý prompt `Hi` và sinh một token EOS trong khoảng **17 phút 14 giây**, không có câu trả lời hiển thị. Mức 300 giây hết hạn ở layer 21/78. Xem [bằng chứng timeout và giới hạn runtime](verification/runtime-timeout-v0.10.1.md) trước khi tăng số token hoặc triển khai API.
 
 Nguồn format: [NVIDIA ModelOpt NVFP4 tại revision đã đối chiếu](https://github.com/NVIDIA/Model-Optimizer/blob/51de53e48ccae8804f8fe1198b7cf89475c5c4f4/modelopt/torch/quantization/qtensor/nvfp4_tensor.py), [vLLM swizzle sau khi load](https://github.com/vllm-project/vllm/blob/d86257e2833e0c3add2c694a380435c451c1b176/vllm/model_executor/kernels/linear/nvfp4/cutlass.py). Các nguồn này mô tả format/toán học, không chứng minh checkpoint đầy đủ đã chạy đúng trên máy này.

@@ -19,6 +19,7 @@ from typing import Sequence
 
 MAX_TILE = 128
 DEFAULT_DLL = Path(__file__).resolve().parent.parent / "build" / "fp8_cpu.dll"
+DENSE_DTYPES = {"BF16": (1, 2), "F16": (2, 2), "F32": (3, 4)}
 
 
 def _finite_float32(value: Real, label: str, *, positive: bool = False) -> float:
@@ -87,6 +88,15 @@ class NativeCpuBackend:
             ctypes.c_float, ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
         ]
         dll.fp8_cpu_matvec_tile.restype = ctypes.c_int
+        dense = getattr(dll, "fp8_cpu_matvec_dense_tile", None)
+        if dense is not None:
+            dense.argtypes = [
+                ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t,
+                ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+            ]
+            dense.restype = ctypes.c_int
         build_info = dll.fp8_cpu_build_info()
         if not build_info:
             raise RuntimeError("Native CPU DLL returned empty build metadata")
@@ -101,6 +111,8 @@ class NativeCpuBackend:
             "max_tile_cols": MAX_TILE,
             "threads": 1,
             "full_model_inference": False,
+            "dense_tile_available": dense is not None,
+            "dense_formats": list(DENSE_DTYPES) if dense is not None else [],
         }
         self._dll = dll
 
@@ -146,4 +158,42 @@ class NativeCpuBackend:
         result = list(output)
         if not all(math.isfinite(value) for value in result):
             raise ValueError("Native CPU backend returned a non-finite FP32 result")
+        return result
+
+    def matvec_dense_tile(self, weights: bytes, rows: int, cols: int,
+                          vector: Sequence[float], dtype: str) -> list[float]:
+        """Decode a <=64-KiB dense tile and reduce with sequential FP32 arithmetic."""
+        dll = self._require_open()
+        for label, dimension in (("rows", rows), ("cols", cols)):
+            if type(dimension) is not int or not 1 <= dimension <= MAX_TILE:
+                raise ValueError(f"{label} must be an integer from 1 to {MAX_TILE}")
+        if not isinstance(dtype, str) or dtype not in DENSE_DTYPES:
+            raise ValueError("Dense tile dtype must be BF16, F16 or F32")
+        code, itemsize = DENSE_DTYPES[dtype]
+        if type(weights) is not bytes or len(weights) != rows * cols * itemsize:
+            raise ValueError("Dense weights must contain exactly rows * cols * itemsize bytes")
+        if isinstance(vector, (str, bytes, bytearray)):
+            raise ValueError("Dense vector must be an indexable numeric sequence with cols elements")
+        try:
+            if len(vector) != cols:
+                raise ValueError("Dense vector length must equal cols")
+            values = [_finite_float32(vector[index], f"vector[{index}]") for index in range(cols)]
+        except (TypeError, KeyError, IndexError) as error:
+            raise ValueError("Dense vector must be an indexable numeric sequence with cols elements") from error
+        function = getattr(dll, "fp8_cpu_matvec_dense_tile", None)
+        if function is None:
+            raise RuntimeError("Native CPU DLL lacks the dense tile entry point. Run build-native.bat")
+        packed = (ctypes.c_uint8 * len(weights)).from_buffer_copy(weights)
+        vector_buffer = (ctypes.c_float * cols)(*values)
+        output = (ctypes.c_float * rows)()
+        status = function(packed, len(weights), rows, cols, code, vector_buffer, cols, output, rows)
+        if status == 1:
+            raise ValueError("Native dense CPU backend rejected tile arguments")
+        if status == 2:
+            raise ValueError("Native dense payload or calculation encountered a non-finite FP32 value")
+        if status != 0:
+            raise RuntimeError(f"Native dense CPU backend returned unknown status {status}")
+        result = list(output)
+        if not all(math.isfinite(value) for value in result):
+            raise ValueError("Native dense CPU backend returned a non-finite FP32 result")
         return result

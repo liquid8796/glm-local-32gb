@@ -14,10 +14,13 @@ import json
 from threading import Lock
 
 from .architecture.mapper import _profile
-from .checkpoint_schema import Findings
+from .checkpoint_schema import Findings, quantization_format
+from .runtime_io import DEFAULT_ROW_BAND_CACHE_BYTES
+from .nvfp4_execution import NVFP4_ROW_BAND_SCRATCH_BYTES
 
 MAX_BYTES = 2**63 - 1
 TILE_EDGE = 128
+ENCODED_ROW_BAND_CACHE_BYTES = DEFAULT_ROW_BAND_CACHE_BYTES
 
 
 class ResidencyError(ValueError):
@@ -254,8 +257,9 @@ class ResidencyPlan:
                 "max_projection_rows": self.max_projection_rows,
                 "max_projection_columns": self.max_projection_columns,
                 "persistent_decoded_weight_bytes": 0,
-                "persistent_encoded_weight_bytes": 0,
-                "weights_residency": "Only active tiles; no prefetched layer or expert bank",
+                "persistent_encoded_weight_bytes": ENCODED_ROW_BAND_CACHE_BYTES,
+                "max_encoded_row_band_cache_bytes": ENCODED_ROW_BAND_CACHE_BYTES,
+                "weights_residency": "Active decoded tiles and bounded encoded row bands; no retained full matrix or expert bank",
                 "row_block_assignment": "cpu,cuda alternating" if self.settings.device == "hybrid" else "cpu",
                 "gpu_gate_required_before_work": self.settings.device == "hybrid",
             },
@@ -366,6 +370,8 @@ def build_plan(config, settings, *, prompt_tokens=None, model_id=None, revision=
     cpu_components = (
         ("mla_latent_cache", layers * context * (kvrank + rope) * 4),
         ("dsa_index_key_cache", len(set(owners)) * context * index_dim * 4),
+        ("encoded_row_band_cache", ENCODED_ROW_BAND_CACHE_BYTES),
+        ("nvfp4_row_band_scratch", NVFP4_ROW_BAND_SCRATCH_BYTES if quantization_format(config) == "nvfp4" else 0),
         ("token_activations", activations),
         ("attention_and_selection_scratch", scratch),
         ("encoded_tile_copies", encoded_tiles),

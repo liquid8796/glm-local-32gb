@@ -7,7 +7,9 @@ import json
 import math
 from pathlib import Path
 import random
+import subprocess
 import sys
+import time
 import traceback
 import uuid
 
@@ -21,6 +23,7 @@ from .hardware import read_gpus
 from .residency import PlannerSettings, build_plan
 from .winjob import JobLimits, run_local_process
 from .model_profiles import reports_directory
+from .runtime_progress import RuntimeProgress, load_last_progress
 
 EXIT_CODES = {"PASS": 0, "ESTIMATE_FITS": 0, "GENERATED_UNVERIFIED": 0,
               "ERROR": 1, "NUMERICAL_MISMATCH": 2, "INTERRUPTED": 130}
@@ -77,13 +80,17 @@ def execute_runtime(root, settings, action, parameters, directory):
               "model_id": settings["model_id"], "revision": settings["revision"],
               "parameters": parameters, "scope": "experimental_checkpoint_runtime",
               **FULL_MODEL_FLAGS}
+    progress = RuntimeProgress(directory, settings, action)
     try:
         if action == "plan":
+            progress("metadata_validation")
             source, analysis = verified_source(root, settings)
+            progress("memory_planning")
             plan = make_plan(source["config"], settings, parameters)
             result.update(status="ESTIMATE_FITS", plan=plan.to_dict(),
                           source_report=analysis["source_report"], catalogue=analysis["catalogue"])
         elif action == "projection":
+            progress("projection_metadata_validation")
             if type(parameters.get("seed", 7)) is not int or not 0 <= parameters.get("seed", 7) <= 0xFFFFFFFF:
                 raise ValueError("Projection seed must be uint32")
             tensor = parameters.get("tensor")
@@ -121,6 +128,7 @@ def execute_runtime(root, settings, action, parameters, directory):
             generator = random.Random(parameters.get("seed", 7))
             vector = [generator.uniform(-0.25, 0.25) for _ in range(cols)]
             with ExitStack() as stack:
+                progress("projection_weights_opening", tensor_name=tensor, rows=rows, cols=cols)
                 if parameters.get("online", False):
                     reader = stack.enter_context(RemoteProjectionReader(descriptor, directory / "payload",
                         budget_bytes=parameters.get("budget_mib", 64) * 1024**2))
@@ -129,14 +137,18 @@ def execute_runtime(root, settings, action, parameters, directory):
                     if not model_dir.is_absolute():
                         model_dir = root / model_dir
                     reader = stack.enter_context(SelectedCatalogueReader(model_dir, descriptor))
+                progress("projection_kernel_initializing", backend=backend)
                 cpu, gpu, gate = _kernels(stack, settings, backend, quant_format=quant_format)
                 execute, reference = execute_projection, reference_projection
                 if quant_format == "nvfp4":
                     from .nvfp4_execution import execute_nvfp4_projection, reference_nvfp4_projection
                     execute, reference = execute_nvfp4_projection, reference_nvfp4_projection
+                progress("projection_execution")
                 actual, counters = execute(reader, descriptor, vector, backend=backend,
                                                       cpu=cpu, gpu=gpu, gate=gate, ledger=ledger)
+                progress("projection_reference")
                 expected = reference(reader, descriptor, vector)
+                progress("projection_comparison")
                 comparison = compare_projection(actual, expected)
                 if quant_format == "nvfp4":
                     comparison.update(reference="independent row-wise E2M1/E4M3/F32 weight dequantization and FP32 matvec",
@@ -145,16 +157,19 @@ def execute_runtime(root, settings, action, parameters, directory):
                               selected_projection_verified=comparison["passed"], comparison=comparison,
                               execution=counters, reader=reader.stats(), allocations=ledger.snapshot())
                 if gate:
+                    progress("gpu_finalization")
                     gate.finish()
                     result["pacing"] = gate.summary()
             if before:
+                progress("resource_validation")
                 after = sample_process()
                 result["process"] = asdict(after)
                 if max(after.peak_working_set_bytes, after.peak_private_commit_bytes) > settings["ram_budget_bytes"]:
                     raise RuntimeError("Observed projection worker memory exceeded the configured budget")
         elif action == "generate":
-            result.update(_generate(root, settings, parameters, directory))
+            result.update(_generate(root, settings, parameters, directory, progress=progress))
         elif action == "tokenizer":
+            progress("tokenizer_preparing")
             from .tokenizer import prepare_tokenizer
             result.update(prepare_tokenizer(root, settings, parameters.get("model_directory"),
                                             online=parameters.get("online", False)))
@@ -165,15 +180,21 @@ def execute_runtime(root, settings, action, parameters, directory):
     except Exception as error:
         result.update(status="ERROR", error=f"{type(error).__name__}: {error}"[:2000],
                       traceback=traceback.format_exc(limit=12, chain=False)[-16000:])
+    finally:
+        result["last_progress"] = progress.finish(result["status"])
+        result["elapsed_seconds"] = result["last_progress"]["elapsed_seconds"]
     result["checked_at"] = datetime.now(timezone.utc).isoformat()
     return result, EXIT_CODES[result["status"]]
 
 
-def _generate(root, settings, parameters, directory):
+def _generate(root, settings, parameters, directory, *, progress=None):
     from .runtime_weights import RuntimeWeights
     from .streaming_decoder import StreamingDecoder
     from .tokenizer import load_tokenizer, prepare_tokenizer
+    report = progress if progress is not None else lambda *args, **kwargs: None
+    report("metadata_validation")
     source, analysis = verified_source(root, settings)
+    report("memory_planning")
     plan = make_plan(source["config"], settings, parameters)
     model_dir = Path(parameters.get("model_directory") or settings["model_directory"])
     if not model_dir.is_absolute():
@@ -181,9 +202,12 @@ def _generate(root, settings, parameters, directory):
     tokens = parameters.get("tokens")
     tokenizer = None
     if tokens is None:
+        report("tokenizer_preparing")
         prepared = prepare_tokenizer(root, settings, model_dir, online=False)
+        report("tokenizer_loading")
         tokenizer = load_tokenizer(model_dir, source["config"], model_id=settings["model_id"],
                                    revision=settings["revision"], manifest=prepared["manifest"])
+        report("prompt_encoding")
         tokens = tokenizer.encode(parameters["prompt"], add_special_tokens=True)
     plan.validate_prompt(len(tokens))
     ledger = plan.allocator(include_cache=False)
@@ -192,16 +216,20 @@ def _generate(root, settings, parameters, directory):
         from .process_metrics import sample_process, average_cpu_percent
         before = sample_process()
     with ExitStack() as stack:
+        report("kernel_initializing", backend=parameters.get("backend", "cpu"))
         cpu, _, _ = _kernels(stack, settings, "cpu")
         gate = None
         if parameters.get("backend", "cpu") == "hybrid":
             from .gpu_gate import GpuBoundaryGate
             gate = GpuBoundaryGate(device_index=settings["gpu_index"], target=settings["gpu_average_target"],
                                   window_seconds=settings["gpu_window_seconds"], max_wait_seconds=10)
+        report("weights_initializing")
         weights = stack.enter_context(RuntimeWeights(root, settings, model_directory=model_dir,
             backend=parameters.get("backend", "cpu"), cpu=cpu, gpu=None, gate=gate, ledger=ledger, plan=plan))
+        report("weights_ready")
+        report("decoder_initializing", prompt_tokens=len(tokens), requested_new_tokens=parameters.get("generate", 32))
         decoder = stack.enter_context(StreamingDecoder(source["config"], weights, plan, ledger=ledger,
-            model_id=settings["model_id"], revision=settings["revision"]))
+            model_id=settings["model_id"], revision=settings["revision"], progress=progress))
         generated = decoder.generate(tokens, max_new_tokens=parameters.get("generate", 32),
                                      eos_token_ids=source["config"].get("eos_token_id"))
         result = {"status": "GENERATED_UNVERIFIED", "generated_token_ids": generated,
@@ -210,11 +238,14 @@ def _generate(root, settings, parameters, directory):
                   "source_report": analysis["source_report"], **FULL_MODEL_FLAGS,
                   "note": "Experimental native FP32 backbone output; full-checkpoint numerical parity is unverified"}
         if tokenizer is not None:
+            report("output_decoding")
             result["text"] = tokenizer.decode(generated, skip_special_tokens=True)
         if gate:
+            report("gpu_finalization")
             gate.finish()
             result["pacing"] = gate.summary()
         if before:
+            report("resource_validation")
             after = sample_process()
             result["process"] = asdict(after)
             result["observed_cpu_percent"] = average_cpu_percent(before, after)
@@ -241,6 +272,7 @@ def launch_runtime(root, settings, action, parameters):
     request = directory / "request.json"
     write_json(request, {"root": str(root), "settings": settings, "action": action, "parameters": parameters})
     captured = []
+    started = time.monotonic()
     if sys.platform == "win32":
         try:
             code = run_local_process([sys.executable, "-m", "glm_local.runtime_worker", str(request)], cwd=root,
@@ -253,6 +285,14 @@ def launch_runtime(root, settings, action, parameters):
                     or result.get("revision") != settings["revision"]
                     or any(result.get(flag) is not False for flag in FULL_MODEL_FLAGS)):
                 raise ValueError("Runtime worker identity, action or capability flags differ from the request")
+        except subprocess.TimeoutExpired as error:
+            code = 1
+            elapsed = time.monotonic() - started
+            result = {"status": "ERROR", "action": action, "model_id": settings["model_id"],
+                      "revision": settings["revision"], "error_type": "TIMEOUT", "timed_out": True,
+                      "timeout_seconds": error.timeout, "elapsed_seconds": elapsed,
+                      "error": f"Runtime exceeded its {error.timeout:g}-second timeout after {elapsed:.1f}s; the worker job tree was stopped.",
+                      **FULL_MODEL_FLAGS}
         except (Exception, KeyboardInterrupt) as error:
             code = 130 if isinstance(error, KeyboardInterrupt) else 1
             result = {"status": "INTERRUPTED" if code == 130 else "ERROR", "action": action,
@@ -260,6 +300,19 @@ def launch_runtime(root, settings, action, parameters):
                       "error": f"{type(error).__name__}: {error}", **FULL_MODEL_FLAGS}
     else:
         result, code = execute_runtime(root, settings, action, parameters, directory)
+    result.setdefault("elapsed_seconds", time.monotonic() - started)
+    if result["status"] in ("ERROR", "INTERRUPTED"):
+        last, recovery_error = load_last_progress(directory, settings, action)
+        if last is not None:
+            result["last_progress"] = last
+            if result.get("timed_out"):
+                result["error"] += f" Last stage: {last['stage']}"
+                if last.get("tensor_name"):
+                    result["error"] += f" ({last['tensor_name']})"
+                result["error"] += f"; stage elapsed {last['stage_elapsed_seconds']:.1f}s."
+        else:
+            result.pop("last_progress", None)
+            result["last_progress_error"] = recovery_error
     result.update(run_directory=str(directory), installed_job_policy=captured[0] if captured else None,
                   job_policy_verified=bool(captured), child_exit_code=code)
     write_json(directory / "result.json", result)

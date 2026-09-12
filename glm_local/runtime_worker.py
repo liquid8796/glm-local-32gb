@@ -1,4 +1,8 @@
-"""Child entrypoint; launch_runtime attaches the Windows job before resume."""
+"""Child entrypoint; launch_runtime attaches the Windows job before resume.
+
+execute_runtime emits flushed stage diagnostics and atomically checkpoints its
+latest stage in this run directory; the final result remains a separate file.
+"""
 import sys
 import stat
 from pathlib import Path

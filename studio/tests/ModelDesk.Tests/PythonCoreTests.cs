@@ -148,6 +148,26 @@ public sealed class PythonCoreTests : IDisposable
         Assert.Contains("Core process failed", await File.ReadAllTextAsync(result.LogPath));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TimeoutClassificationRequiresFreshMatchingCoreReport(bool wrongIdentity)
+    {
+        string[] arguments = wrongIdentity ? ["--timeout-result", "--wrong-identity"] : ["--timeout-result"];
+        var result = await _service.RunAsync(new CoreRunRequest(_settings, "generate", arguments));
+        Assert.Equal(1, result.ExitCode);
+        Assert.False(result.Cancelled);
+        Assert.Equal(!wrongIdentity, result.TimedOut);
+        Assert.Equal(wrongIdentity ? "Failed" : "Timed out", result.Status);
+        if (wrongIdentity) Assert.Null(result.ReportPath);
+        else
+        {
+            Assert.NotNull(result.ReportPath);
+            using var report = JsonDocument.Parse(await File.ReadAllTextAsync(result.ReportPath));
+            Assert.True(report.RootElement.GetProperty("timed_out").GetBoolean());
+        }
+    }
+
     [Fact]
     public async Task ToolWrappersRejectUnrequestedShellArguments()
     {
@@ -200,10 +220,12 @@ public sealed class PythonCoreTests : IDisposable
         if '--legacy-report' in arguments: report = pathlib.Path.cwd() / 'reports' / 'latest.json'
         if '--no-report' not in arguments:
             report.parent.mkdir(parents=True, exist_ok=True)
-            report.write_text(json.dumps({'status':'BLOCKED','arguments':arguments,'config':config,
+            report.write_text(json.dumps({'status':'ERROR' if '--timeout-result' in arguments else 'BLOCKED',
+                'timed_out':'--timeout-result' in arguments,'error_type':'TIMEOUT' if '--timeout-result' in arguments else None,
+                'arguments':arguments,'config':config,
                 'model_id':'other/model' if '--wrong-identity' in arguments else config['model_id'],
-                'revision':config['revision'],'action':'generate' if '--wrong-action' in arguments else 'doctor'}), encoding='utf-8')
+                'revision':config['revision'],'action':'generate' if '--wrong-action' in arguments or '--timeout-result' in arguments else 'doctor'}), encoding='utf-8')
         print('Report: ' + str(report), flush=True)
-        sys.exit(2)
+        sys.exit(1 if '--timeout-result' in arguments else 2)
         """;
 }

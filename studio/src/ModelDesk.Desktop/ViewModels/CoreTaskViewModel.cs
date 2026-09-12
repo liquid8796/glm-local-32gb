@@ -48,7 +48,9 @@ public sealed class CoreTaskViewModel(IPythonCoreService service, Func<AppSettin
                     if (buffer.Length > 350_000) buffer.Remove(0, buffer.Length - 300_000);
                     dirty = true;
                 }), cancellation.Token);
-            Status = LastResult.Cancelled ? "Đã dừng tác vụ" : LastResult.ExitCode == 0 ? "Hoàn tất" : $"Cần xem báo cáo · mã {LastResult.ExitCode}";
+            Status = LastResult.Cancelled ? "Đã dừng tác vụ"
+                : LastResult.TimedOut ? "Hết thời gian chờ · xem giai đoạn cuối trong nhật ký"
+                : LastResult.ExitCode == 0 ? "Hoàn tất" : $"Cần xem báo cáo · mã {LastResult.ExitCode}";
             Raise(nameof(LastResult)); Completed?.Invoke(this, EventArgs.Empty);
         }
         catch (OperationCanceledException) { Status = "Đã dừng tác vụ"; }

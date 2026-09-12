@@ -14,7 +14,12 @@ from .cpu_probe import _finite_float32
 from .execution import (ProjectionDescriptor, TensorDescriptor, FULL_MODEL_FLAGS,
                         MAX_VECTOR_ELEMENTS, MAX_PROJECTION_TILES, MAX_REFERENCE_ELEMENTS,
                         _vector, _reference_decode)
-from .nvfp4_blocks import NVFP4BlockMatrix, TILE
+from .nvfp4_blocks import BLOCK, NVFP4BlockMatrix, TILE, decode_e4m3_scale
+from .safetensor_reader import MAX_READ_BYTES
+
+NVFP4_ROW_BAND_SCRATCH_BYTES = 5 * 1024**2
+MAX_ROW_BAND_COLUMNS = 16384
+_MAX_ENCODED_BAND_BYTES = TILE * (MAX_ROW_BAND_COLUMNS // 2 + MAX_ROW_BAND_COLUMNS // BLOCK)
 
 
 @dataclass(frozen=True)
@@ -73,10 +78,19 @@ def execute_nvfp4_projection(reader, descriptor, vector, *, backend="cpu", cpu=N
             raise ValueError("NVFP4 projection exceeds remaining CUDA operation budget")
     host_bytes = 3 * (TILE * TILE // 2 + TILE * TILE // 16) + 4 * (matrix.rows + matrix.cols + 4 * TILE) + 8
     with ledger.reserve(host_bytes, label="nvfp4_projection") if ledger else nullcontext():
+        if (backend == "cpu" and matrix.cols <= MAX_ROW_BAND_COLUMNS
+                and callable(getattr(cpu, "matvec_nvfp4_row_band", None))
+                and getattr(cpu, "supports_nvfp4_row_band", True)):
+            with ledger.reserve(NVFP4_ROW_BAND_SCRATCH_BYTES, label="nvfp4_row_band_scratch") if ledger else nullcontext():
+                return _execute_cpu_row_bands(reader, descriptor, matrix, vector, cpu, host_bytes)
         values = _vector(vector, matrix.cols)
         result = [0.0] * matrix.rows
         counts = {"cpu_tiles": 0, "gpu_tiles": 0, "packed_weight_bytes": 0, "block_scale_bytes": 0,
                   "max_packed_tile_bytes": 0, "logical_host_buffer_bytes": host_bytes,
+                  "cpu_row_bands": 0, "native_row_band_calls": 0, "native_row_band_batching": False,
+                  "row_band_read_calls": 0, "row_band_read_bytes": 0, "row_band_scalar_reads": 0,
+                  "max_row_band_read_bytes": 0, "max_encoded_band_bytes": 0,
+                  "max_packed_band_bytes": 0, "row_band_scratch_bytes": 0,
                   "retained_decoded_weight_bytes": 0, "activation_quantization": "none",
                   "input_scale_validated": True, "native_w4a4_parity_verified": False, **FULL_MODEL_FLAGS}
         for block in matrix.iter_blocks():
@@ -96,6 +110,74 @@ def execute_nvfp4_projection(reader, descriptor, vector, *, backend="cpu", cpu=N
             counts["packed_weight_bytes"] += len(block.weights)
             counts["block_scale_bytes"] += len(block.scales)
             counts["max_packed_tile_bytes"] = max(counts["max_packed_tile_bytes"], len(block.weights))
+    return result, counts
+
+
+def _read_encoded_band(reader, name, offset, count, counts):
+    """Gather one leased band using only bounded tensor-relative reads."""
+    if type(offset) is not int or offset < 0 or type(count) is not int or not 1 <= count <= _MAX_ENCODED_BAND_BYTES:
+        raise ValueError("NVFP4 encoded row band exceeds its bounded byte policy")
+    data = bytearray(count)
+    for at in range(0, count, MAX_READ_BYTES):
+        size = min(MAX_READ_BYTES, count - at)
+        raw = reader.read_bytes(name, offset + at, size)
+        if type(raw) is not bytes or len(raw) != size:
+            raise ValueError("NVFP4 encoded row-band read returned an incorrect byte count")
+        data[at:at + size] = raw
+        counts["row_band_read_calls"] += 1
+        counts["row_band_read_bytes"] += size
+        counts["max_row_band_read_bytes"] = max(counts["max_row_band_read_bytes"], size)
+        del raw
+    return bytes(data)
+
+
+def _execute_cpu_row_bands(reader, descriptor, matrix, vector, cpu, host_bytes):
+    if isinstance(vector, (str, bytes, bytearray)) or not hasattr(vector, "__len__") or len(vector) != matrix.cols:
+        raise ValueError("Input vector must have exactly the selected matrix column count")
+    prepare = getattr(cpu, "prepare_nvfp4_vector", None)
+    values = prepare(vector) if callable(prepare) else _vector(vector, matrix.cols)
+    if isinstance(values, (str, bytes, bytearray)) or not hasattr(values, "__len__") or len(values) != matrix.cols:
+        raise ValueError("Prepared NVFP4 vector must preserve the selected matrix column count")
+    result = [0.0] * matrix.rows
+    counts = {"cpu_tiles": matrix.block_rows * matrix.block_cols, "gpu_tiles": 0,
+              "cpu_row_bands": 0, "native_row_band_calls": 0, "native_row_band_batching": True,
+              "packed_weight_bytes": 0, "block_scale_bytes": 0, "max_packed_band_bytes": 0,
+              "row_band_read_calls": 0, "row_band_read_bytes": 0, "row_band_scalar_reads": 0,
+              "max_row_band_read_bytes": 0, "max_encoded_band_bytes": 0,
+              "max_packed_tile_bytes": min(TILE, matrix.rows) * min(TILE, matrix.cols) // 2,
+              "logical_host_buffer_bytes": host_bytes + NVFP4_ROW_BAND_SCRATCH_BYTES,
+              "row_band_scratch_bytes": NVFP4_ROW_BAND_SCRATCH_BYTES,
+              "retained_encoded_weight_bytes": 0,
+              "retained_decoded_weight_bytes": 0, "activation_quantization": "none",
+              "input_scale_validated": True, "native_w4a4_parity_verified": False, **FULL_MODEL_FLAGS}
+    for row in range(0, matrix.rows, TILE):
+        rows = min(TILE, matrix.rows - row)
+        global_scale = matrix._scalar(descriptor.global_scale.name, "global weight scale")
+        matrix._scalar(descriptor.input_scale.name, "input scale")
+        counts["row_band_scalar_reads"] += 2
+        packed = scales = output = None
+        try:
+            packed = _read_encoded_band(reader, descriptor.weight.name, row * (matrix.cols // 2), rows * (matrix.cols // 2), counts)
+            scales = _read_encoded_band(reader, descriptor.scale.name, row * (matrix.cols // BLOCK), rows * (matrix.cols // BLOCK), counts)
+            # The byte fast path avoids re-decoding valid scales in Python, while an
+            # invalid byte still follows the same validation as NVFP4BlockMatrix.
+            if not scales.isascii() or b"\x7f" in scales:
+                for code in scales:
+                    decode_e4m3_scale(code)
+            counts["native_row_band_calls"] += 1
+            output = cpu.matvec_nvfp4_row_band(packed, rows, matrix.cols, scales, values, global_scale)
+            if not hasattr(output, "__len__") or len(output) != rows:
+                raise ValueError("NVFP4 row-band kernel returned an invalid output length")
+            for index in range(rows):
+                result[row + index] = _finite_float32(output[index], "NVFP4 row-band output")
+            counts["cpu_row_bands"] += 1
+            counts["packed_weight_bytes"] += len(packed)
+            counts["block_scale_bytes"] += len(scales)
+            counts["max_packed_band_bytes"] = max(counts["max_packed_band_bytes"], len(packed))
+            counts["max_encoded_band_bytes"] = max(counts["max_encoded_band_bytes"], len(packed) + len(scales))
+        finally:
+            # Do not carry prior row-band buffers into the next read/allocation.
+            packed = scales = output = None
     return result, counts
 
 

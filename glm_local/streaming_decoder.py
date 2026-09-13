@@ -1,8 +1,8 @@
 """Config-derived GLM backbone decoder with bounded, compressed CPU caches.
 
 The equations follow the pinned Transformers GLM-MoE-DSA implementation;
-attention reconstructs one selected token's K/V at a time and uses online
-softmax instead of retaining expanded keys/values. Stored values are FP32;
+attention uses online softmax and a bounded cache of expanded keys/values,
+reconstructing evicted entries from compressed latents. Stored values are FP32;
 Python scalar reductions use float64. This is not a BF16/FP8-kernel numerical
 emulation or evidence of real-checkpoint parity. Weights and GPU scheduling
 belong to the injected adapter. MTP/speculative decoding is not executed.
@@ -156,6 +156,10 @@ class StreamingDecoder:
         self.last_trace = None
         self._cache_lease = None
         self._cache, self._index_cache = [], {}
+        from .expanded_cache import ExpandedKvCache
+        self._expanded_cache = ExpandedKvCache(plan.layer_count,
+            min(plan.settings.expanded_cache_tokens, plan.settings.context_tokens),
+            config["num_attention_heads"] * (config["qk_nope_head_dim"] + config["v_head_dim"]), self.ledger)
         findings = Findings()
         profile = _profile(config, findings, model_id=model_id, revision=revision)
         self._mlps = tuple(profile["mlps"])
@@ -271,7 +275,7 @@ class StreamingDecoder:
             raise DecoderError("Attention top-k returned invalid token indices")
         return array("q", selected)
 
-    def _attention(self, layer, hidden, previous_indices):
+    def _attention(self, layer, hidden, previous_indices, *, project_output=True):
         config = self.config
         prefix = f"model.layers.{layer}.self_attn."
         heads = config["num_attention_heads"]
@@ -294,15 +298,20 @@ class StreamingDecoder:
                     else previous_indices)
         if selected is None:
             raise DecoderError("Shared indexer has no preceding full-indexer selection")
-        # Online softmax: one expanded token at a time. Reconstructing K/V
-        # adds projection work but keeps cache storage proportional to rank.
+        # Online softmax with bounded expanded K/V reuse. Older evicted tokens
+        # are reconstructed from compressed latents when selected again.
         maximum = array("d", [float("-inf")]) * heads
         denominator = array("d", [0.0]) * heads
         output = array("d", [0.0]) * (heads * value)
         scale = 1.0 / math.sqrt(query_width)
         for token in selected:
             slot = token * self._width
-            expanded = self._project(prefix + "kv_b_proj.weight", cache[slot:slot + rank])
+            latent_values = cache[slot:slot + rank]
+            name = prefix + "kv_b_proj.weight"
+            validate = getattr(self.weights, "assert_weight_unchanged", None)
+            expanded = self._expanded_cache.get(layer, token, latent_values,
+                lambda: self._project(name, latent_values),
+                (lambda: validate(name)) if callable(validate) else None)
             for head in range(heads):
                 q, kv = head * query_width, head * (nope + value)
                 score = (math.fsum(query[q + d] * expanded[kv + d] for d in range(nope))
@@ -315,9 +324,10 @@ class StreamingDecoder:
                     at = head * value + d
                     output[at] = output[at] * previous_scale + probability * expanded[kv + nope + d]
                 maximum[head] = new_max
+            expanded = None
         normalized = array("f", (output[head * value + d] / denominator[head]
                                   for head in range(heads) for d in range(value)))
-        return self._project(prefix + "o_proj.weight", normalized), selected
+        return (self._project(prefix + "o_proj.weight", normalized) if project_output else normalized), selected
 
     def _ffn(self, prefix, hidden):
         gate = self._project(prefix + "gate_proj.weight", hidden)
@@ -353,6 +363,15 @@ class StreamingDecoder:
         return array("f", (base + delta for base, delta in zip(output, shared)))
 
     def step(self, token):
+        position, trace = self._position, self.last_trace
+        try:
+            return self._step(token)
+        except BaseException:
+            self._position, self.last_trace = position, trace
+            self._expanded_cache.truncate(position)
+            raise
+
+    def _step(self, token):
         """Process one token and return FP32 next-token logits."""
         self._require_open()
         self._token(token)
@@ -386,9 +405,28 @@ class StreamingDecoder:
             self._position += 1
             return logits
 
-    def generate(self, prompt_ids, max_new_tokens=None, eos_token_ids=None):
+    def prefill(self, prompt_ids, *, batch_size=16):
+        """Prefill a bounded prompt; only its final position needs output logits."""
+        from .batched_prefill import prefill_chunk
+        if type(batch_size) is not int or not 1 <= batch_size <= 16:
+            raise DecoderError("Prefill batch size must be 1..16")
+        if not isinstance(prompt_ids, (list, tuple, array)) or not prompt_ids:
+            raise DecoderError("Prefill needs a nonempty token sequence")
+        if self.position + len(prompt_ids) > self.plan.settings.context_tokens:
+            raise DecoderError("Prefill exceeds the planned context")
+        for token in prompt_ids:
+            self._token(token)
+        logits = None
+        for start in range(0, len(prompt_ids), batch_size):
+            last = start + batch_size >= len(prompt_ids)
+            logits = prefill_chunk(self, prompt_ids[start:start + batch_size], output_logits=last)
+        return logits
+
+    def generate(self, prompt_ids, max_new_tokens=None, eos_token_ids=None, *, on_token=None, prefill_batch_size=1):
         """Generate greedy token IDs from a nonempty prompt and an empty cache."""
         self._require_open()
+        if on_token is not None and not callable(on_token):
+            raise DecoderError("on_token must be a callable generated-token observer")
         if self._position:
             raise DecoderError("generate requires an empty cache; call reset first")
         if not isinstance(prompt_ids, (list, tuple, array)) or not prompt_ids:
@@ -408,14 +446,21 @@ class StreamingDecoder:
         if not isinstance(eos, (list, tuple, set)) or len(eos) > 256:
             raise DecoderError("EOS IDs must be at most 256 configured token IDs")
         stop = {self._token(token) for token in eos}
-        for index, token in enumerate(prompt_ids):
-            self._report_progress("prefill", phase="prefill", token_index=index, token_count=len(prompt_ids),
-                                  prompt_tokens=len(prompt_ids), requested_new_tokens=generated_count, generated_tokens=0)
-            logits = self.step(token)
+        if type(prefill_batch_size) is not int or not 1 <= prefill_batch_size <= 16:
+            raise DecoderError("Prefill batch size must be 1..16")
+        if prefill_batch_size > 1:
+            logits = self.prefill(prompt_ids, batch_size=prefill_batch_size)
+        else:
+            for index, token in enumerate(prompt_ids):
+                self._report_progress("prefill", phase="prefill", token_index=index, token_count=len(prompt_ids),
+                                      prompt_tokens=len(prompt_ids), requested_new_tokens=generated_count, generated_tokens=0)
+                logits = self.step(token)
         generated = []
         for index in range(generated_count):
             token = max(range(len(logits)), key=lambda item: (logits[item], -item))
             generated.append(token)
+            if on_token is not None:
+                on_token(token, index)
             self._report_progress("generated_token", generated_tokens=len(generated))
             if token in stop or index + 1 == generated_count:
                 break
@@ -429,8 +474,10 @@ class StreamingDecoder:
         self._require_open()
         self._position = 0
         self.last_trace = None
+        self._expanded_cache.clear()
 
     def close(self):
+        self._expanded_cache.clear()
         self._cache.clear()
         self._index_cache.clear()
         self.last_trace = None

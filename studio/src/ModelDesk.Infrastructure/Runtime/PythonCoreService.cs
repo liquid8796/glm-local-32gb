@@ -43,11 +43,22 @@ public sealed class PythonCoreService : IPythonCoreService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Arguments);
+        // Freeze caller-owned message/argument collections before the first await.
+        var chat = request.Chat?.ValidateAndSnapshot();
+        var arguments = request.Arguments.ToArray();
+        if (chat is not null)
+        {
+            if (request.Operation != "generate") throw new ArgumentException("Structured chat is supported only for generation.");
+            string[] reserved = ["--prompt", "--tokens", "--messages-file", "--prompt-format", "--reasoning-effort", "--keep-thinking", "--stream-events"];
+            if (arguments.Any(value => value is not null && reserved.Contains(value.Split('=')[0], StringComparer.Ordinal)))
+                throw new ArgumentException("Chat input/format options are owned by the structured conversation request.");
+        }
         request.Settings.Validate();
         var operation = CoreOperations.Get(request.Operation);
-        if (request.Arguments.Any(value => value is null || value.Contains('\0')) || request.Arguments.Count > 256)
+        if (arguments.Any(value => value is null || value.Contains('\0')) || arguments.Length > 256)
             throw new ArgumentException("Core arguments contain an invalid value or exceed 256 entries.");
-        if (request.Arguments.Sum(value => (long)Encoding.UTF8.GetByteCount(value)) > 1024 * 1024)
+        if (arguments.Sum(value => (long)Encoding.UTF8.GetByteCount(value)) > 1024 * 1024)
             throw new ArgumentException("Core argument text exceeds the 1 MiB limit.");
         var root = Root(request.Settings.ProjectRoot);
         var profiles = GetProfiles(root);
@@ -65,18 +76,28 @@ public sealed class PythonCoreService : IPythonCoreService
             config["model_directory"] = Path.GetFullPath(request.Settings.RuntimeModelDirectory, root);
         using var parsedConfig = JsonDocument.Parse(config.ToJsonString());
         var reportDirectory = ReportDirectory(root, parsedConfig.RootElement);
-        var id = DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ") + "-" + Guid.NewGuid().ToString("N")[..8];
+        var id = DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ") + "-" + Guid.NewGuid().ToString("N");
         var runDirectory = LocalFiles.Within(Path.Combine(root, "reports", "modeldesk", "runs", id), root);
         Directory.CreateDirectory(runDirectory);
         var generatedConfig = Path.Combine(runDirectory, "config.json");
         await LocalFiles.AtomicWriteAsync(generatedConfig, Encoding.UTF8.GetBytes(config.ToJsonString(LocalFiles.JsonOptions)), cancellationToken);
+        string? ownedMessagesPath = null;
+        if (chat is not null)
+        {
+            var messagesPath = Path.Combine(runDirectory, "messages.json");
+            ownedMessagesPath = messagesPath;
+            await LocalFiles.AtomicWriteAsync(messagesPath, JsonSerializer.SerializeToUtf8Bytes(chat.Messages, ChatRunOptions.JsonOptions), cancellationToken);
+            arguments = [.. arguments, "--messages-file", messagesPath, "--prompt-format", "chat", "--reasoning-effort", chat.ReasoningEffort, "--stream-events"];
+            if (chat.KeepThinking) arguments = [.. arguments, "--keep-thinking"];
+        }
         var logPath = Path.Combine(runDirectory, "output.log");
         var expected = ExpectedReports(root, reportDirectory, operation.Id).ToArray();
         var prior = new Dictionary<string, (DateTime LastWrite, long Length)>();
         foreach (var path in expected)
             if (File.Exists(path)) { var info = new FileInfo(LocalFiles.CheckPath(path)); prior[path] = (info.LastWriteTimeUtc, info.Length); }
         var reportHints = new ConcurrentQueue<string>();
-        var startInfo = CreateStartInfo(root, request.Settings, operation, generatedConfig, request.Arguments);
+        var startInfo = CreateStartInfo(root, request.Settings, operation, generatedConfig, arguments);
+        var response = new GenerationAccumulator();
         var started = DateTimeOffset.UtcNow;
         var cancelled = false;
         int exitCode;
@@ -89,7 +110,16 @@ public sealed class PythonCoreService : IPythonCoreService
             var truncated = false;
             async Task Publish(string line, bool error)
             {
-                output?.Report(new CoreOutput(DateTimeOffset.UtcNow, line, error));
+                ModelStreamEvent? streamEvent = null;
+                if (!error)
+                {
+                    if (ModelStreamEventParser.TryParse(line, out var parsedEvent, out var streamError) && parsedEvent is not null)
+                    {
+                        if (response.Apply(parsedEvent)) streamEvent = parsedEvent;
+                    }
+                    else if (streamError is not null) response.MarkStreamError();
+                }
+                output?.Report(new CoreOutput(DateTimeOffset.UtcNow, line, error, streamEvent));
                 if ((line.StartsWith("Report:", StringComparison.Ordinal) || line.StartsWith("Saved:", StringComparison.Ordinal))
                     && reportHints.Count < 32) reportHints.Enqueue(line[(line.IndexOf(':') + 1)..].Trim().Trim('"', '\''));
                 await logLock.WaitAsync();
@@ -149,11 +179,60 @@ public sealed class PythonCoreService : IPythonCoreService
         var hints = reportHints.Reverse().ToArray();
         var capturedReport = await CaptureFreshReport(root, reportDirectory, runDirectory,
             cancelled ? hints : hints.Concat(expected), prior, started, operation.Id,
-            RequiredString(parsedConfig.RootElement, "model_id"), RequiredString(parsedConfig.RootElement, "revision"), cancelled, expected);
+            RequiredString(parsedConfig.RootElement, "model_id"), RequiredString(parsedConfig.RootElement, "revision"), cancelled, expected, ownedMessagesPath);
+        var timedOut = !cancelled && exitCode == 1 && capturedReport.TimedOut;
+        GenerationResult? generation = response.HasStarted ? response.Snapshot() : null;
+        if (operation.Id == "generate" && capturedReport.Path is not null)
+        {
+            var final = await ReadGenerationAsync(capturedReport.Path, generation);
+            if (final is not null) { response.Reconcile(final); generation = response.Snapshot(); }
+        }
+        if (generation is not null && (cancelled || timedOut || exitCode != 0))
+            generation = generation with { AssistantResponseComplete = false,
+                Status = cancelled ? "INTERRUPTED" : timedOut ? "ERROR" :
+                    generation.Status is "INCOMPLETE_RESPONSE" or "STREAM_ERROR" or "OUTPUT_TRUNCATED" ? generation.Status : "ERROR",
+                StopReason = cancelled ? "cancelled" : timedOut ? "timeout" : generation.StopReason ?? "error" };
+        if (chat is not null && generation is null && exitCode != 0)
+            generation = new("", "", cancelled ? "cancelled" : timedOut ? "timeout" : "error", false, 0,
+                cancelled ? "INTERRUPTED" : "ERROR");
+        if (chat is not null && exitCode == 0 && generation?.AssistantResponseComplete != true)
+        {
+            exitCode = 2;
+            generation = (generation ?? new GenerationResult("", "", "missing_response", false, 0, "INCOMPLETE_RESPONSE"))
+                with { AssistantResponseComplete = false, Status = "INCOMPLETE_RESPONSE" };
+        }
         var result = new CoreRunResult(id, exitCode, cancelled, logPath, capturedReport.Path, started, DateTimeOffset.UtcNow,
-            TimedOut: !cancelled && exitCode == 1 && capturedReport.TimedOut);
+            TimedOut: timedOut, Generation: generation);
         await LocalFiles.AtomicWriteAsync(Path.Combine(runDirectory, "run.json"), JsonSerializer.SerializeToUtf8Bytes(result, LocalFiles.JsonOptions));
         return result;
+    }
+
+    private static async Task<GenerationResult?> ReadGenerationAsync(string path, GenerationResult? observed)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(await LocalFiles.ReadBoundedAsync(path, MaximumReportBytes));
+            var report = json.RootElement;
+            if (!report.TryGetProperty("text", out _) && !report.TryGetProperty("reasoning", out _)) return null;
+            static string Text(JsonElement source, string name, string fallback = "") => source.TryGetProperty(name, out var field) && field.ValueKind == JsonValueKind.String ? field.GetString()! : fallback;
+            var tokens = observed?.GeneratedTokens ?? 0;
+            if (report.TryGetProperty("generated_tokens", out var number) && number.TryGetInt32(out var count) && count is >= 0 and <= 1048576) tokens = count;
+            else if (report.TryGetProperty("generated_token_ids", out var ids) && ids.ValueKind == JsonValueKind.Array && ids.GetArrayLength() <= 1048576) tokens = ids.GetArrayLength();
+            var final = new GenerationResult(Text(report, "text"), Text(report, "reasoning"), Text(report, "stop_reason", observed?.StopReason ?? "unknown"),
+                report.TryGetProperty("assistant_response_complete", out var complete) && complete.ValueKind == JsonValueKind.True,
+                tokens, Text(report, "status", "INCOMPLETE_RESPONSE"));
+            // Crash/timeout snapshots are periodically flushed and can lag stdout.
+            // Never replace a newer visible partial with an older checkpoint. Normal
+            // final reports still reconcile tokenizer corrections authoritatively.
+            var recovered = report.TryGetProperty("partial_response_recovered", out var recovery) && recovery.ValueKind == JsonValueKind.True;
+            if (recovered && observed is not null && (observed.GeneratedTokens > tokens ||
+                observed.GeneratedTokens == tokens && observed.Status != "STREAM_ERROR" && !observed.OutputTruncated &&
+                (final.Text.Length < observed.Text.Length || final.Reasoning.Length < observed.Reasoning.Length)))
+                final = final with { Text = observed.Text, Reasoning = observed.Reasoning, GeneratedTokens = observed.GeneratedTokens,
+                    OutputTruncated = observed.OutputTruncated, AssistantResponseComplete = false };
+            return final;
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or ArgumentException or InvalidOperationException) { return null; }
     }
 
     private static ProcessStartInfo CreateStartInfo(string root, AppSettings settings, CoreOperation operation,
@@ -227,7 +306,7 @@ public sealed class PythonCoreService : IPythonCoreService
 
     private static async Task<(string? Path, bool TimedOut)> CaptureFreshReport(string root, string reportDirectory, string runDirectory, IEnumerable<string> paths,
         Dictionary<string, (DateTime LastWrite, long Length)> prior, DateTimeOffset started, string operation,
-        string modelId, string revision, bool cancelled, string[] sharedLatestPaths)
+        string modelId, string revision, bool cancelled, string[] sharedLatestPaths, string? ownedMessagesPath = null)
     {
         foreach (var candidate in paths.Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -251,6 +330,7 @@ public sealed class PythonCoreService : IPythonCoreService
                 var action = operation switch { "runtime-plan" => "plan", "projection-check" => "projection", "tokenizer-check" => "tokenizer", _ => operation };
                 if (report.TryGetProperty("action", out var reportedAction) &&
                     (reportedAction.ValueKind != JsonValueKind.String || reportedAction.GetString() != action)) continue;
+                if (ownedMessagesPath is not null && !await MatchesConversationRequest(root, reportDirectory, report, ownedMessagesPath, started)) continue;
                 var saved = Path.Combine(runDirectory, "report.json");
                 await LocalFiles.AtomicWriteAsync(saved, bytes);
                 var timedOut = report.TryGetProperty("timed_out", out var timeout) && timeout.ValueKind == JsonValueKind.True
@@ -261,6 +341,19 @@ public sealed class PythonCoreService : IPythonCoreService
             catch (Exception exception) when (exception is IOException or ArgumentException or JsonException or UnauthorizedAccessException) { }
         }
         return (null, false);
+    }
+
+    private static async Task<bool> MatchesConversationRequest(string root, string reportDirectory, JsonElement report,
+        string ownedMessagesPath, DateTimeOffset started)
+    {
+        if (!report.TryGetProperty("run_directory", out var directory) || directory.ValueKind != JsonValueKind.String) return false;
+        var runtimeDirectory = LocalFiles.Within(Path.GetFullPath(directory.GetString()!, root), Path.Combine(reportDirectory, "generate"));
+        var path = LocalFiles.Within(Path.Combine(runtimeDirectory, "request.json"), runtimeDirectory);
+        if (!File.Exists(path) || File.GetLastWriteTimeUtc(path) < started.UtcDateTime) return false;
+        using var request = JsonDocument.Parse(await LocalFiles.ReadBoundedAsync(path, 1024 * 1024));
+        if (!request.RootElement.TryGetProperty("parameters", out var parameters) || parameters.ValueKind != JsonValueKind.Object ||
+            !parameters.TryGetProperty("messages_file", out var messages) || messages.ValueKind != JsonValueKind.String) return false;
+        return Path.GetFullPath(messages.GetString()!, root).Equals(ownedMessagesPath, StringComparison.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<string> ExpectedReports(string root, string directory, string operation)

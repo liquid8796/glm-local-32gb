@@ -26,7 +26,7 @@ from .model_profiles import reports_directory
 from .runtime_progress import RuntimeProgress, load_last_progress
 
 EXIT_CODES = {"PASS": 0, "ESTIMATE_FITS": 0, "GENERATED_UNVERIFIED": 0,
-              "ERROR": 1, "NUMERICAL_MISMATCH": 2, "INTERRUPTED": 130}
+              "ERROR": 1, "NUMERICAL_MISMATCH": 2, "INCOMPLETE_RESPONSE": 2, "INTERRUPTED": 130}
 
 
 def verified_source(root, settings):
@@ -188,9 +188,12 @@ def execute_runtime(root, settings, action, parameters, directory):
 
 
 def _generate(root, settings, parameters, directory, *, progress=None):
+    request_started = time.monotonic()
     from .runtime_weights import RuntimeWeights
     from .streaming_decoder import StreamingDecoder
     from .tokenizer import load_tokenizer, prepare_tokenizer
+    from .chat import (ResponseStreamer, format_chat_messages, load_chat_template,
+                       read_messages_file, validate_messages)
     report = progress if progress is not None else lambda *args, **kwargs: None
     report("metadata_validation")
     source, analysis = verified_source(root, settings)
@@ -200,7 +203,13 @@ def _generate(root, settings, parameters, directory, *, progress=None):
     if not model_dir.is_absolute():
         model_dir = root / model_dir
     tokens = parameters.get("tokens")
-    tokenizer = None
+    tokenizer = streamer = None
+    prompt_format = parameters.get("prompt_format") or ("chat" if parameters.get("messages_file") else "raw")
+    if prompt_format not in ("raw", "chat"):
+        raise ValueError("Prompt format must be raw or chat")
+    chat_receipt = None
+    if tokens is not None and (prompt_format == "chat" or parameters.get("messages_file") or parameters.get("stream_events")):
+        raise ValueError("Token-ID input cannot be combined with chat or decoded-text streaming")
     if tokens is None:
         report("tokenizer_preparing")
         prepared = prepare_tokenizer(root, settings, model_dir, online=False)
@@ -208,8 +217,31 @@ def _generate(root, settings, parameters, directory, *, progress=None):
         tokenizer = load_tokenizer(model_dir, source["config"], model_id=settings["model_id"],
                                    revision=settings["revision"], manifest=prepared["manifest"])
         report("prompt_encoding")
-        tokens = tokenizer.encode(parameters["prompt"], add_special_tokens=True)
+        if prompt_format == "chat":
+            if parameters.get("messages_file"):
+                if parameters.get("prompt") is not None:
+                    raise ValueError("Provide a prompt or a messages file, not both")
+                messages = read_messages_file(parameters["messages_file"])
+            else:
+                messages = validate_messages([{"role": "user", "content": parameters.get("prompt")}], require_user_tail=True)
+            report("chat_template_validation")
+            chat_receipt = load_chat_template(model_dir, model_id=settings["model_id"],
+                revision=settings["revision"], manifest=prepared["manifest"])
+            effort = parameters.get("reasoning_effort") or "max"
+            clear_thinking = not parameters.get("keep_thinking", False)
+            text = format_chat_messages(messages, reasoning_effort=effort, clear_thinking=clear_thinking)
+            # The reviewed template already inserts all role/control tokens.
+            tokens = tokenizer.encode(text, add_special_tokens=False)
+            chat_receipt.update(reasoning_effort=effort, clear_thinking=clear_thinking,
+                                message_count=len(messages), thinking_enabled=True)
+        else:
+            if parameters.get("messages_file"):
+                raise ValueError("Structured messages require chat format")
+            tokens = tokenizer.encode(parameters["prompt"], add_special_tokens=True)
     plan.validate_prompt(len(tokens))
+    if tokenizer is not None:
+        streamer = ResponseStreamer(tokenizer, directory, settings, prompt_format=prompt_format,
+                                    enabled=parameters.get("stream_events", False))
     ledger = plan.allocator(include_cache=False)
     before = None
     if sys.platform == "win32":
@@ -230,16 +262,47 @@ def _generate(root, settings, parameters, directory, *, progress=None):
         report("decoder_initializing", prompt_tokens=len(tokens), requested_new_tokens=parameters.get("generate", 32))
         decoder = stack.enter_context(StreamingDecoder(source["config"], weights, plan, ledger=ledger,
             model_id=settings["model_id"], revision=settings["revision"], progress=progress))
+        inference_started = time.monotonic()
+        first_token_at = None
+
+        def observe_token(token, index):
+            nonlocal first_token_at
+            if first_token_at is None:
+                first_token_at = time.monotonic()
+            if streamer is not None:
+                streamer.on_token(token, index)
+
         generated = decoder.generate(tokens, max_new_tokens=parameters.get("generate", 32),
-                                     eos_token_ids=source["config"].get("eos_token_id"))
+                                     eos_token_ids=source["config"].get("eos_token_id"),
+                                     on_token=observe_token,
+                                     prefill_batch_size=parameters.get("prefill_batch_size", 16))
+        inference_ended = time.monotonic()
+        prefill_seconds = first_token_at - inference_started if first_token_at is not None else None
+        decode_seconds = inference_ended - first_token_at if first_token_at is not None else None
+        decode_steps = max(0, len(generated) - 1)
         result = {"status": "GENERATED_UNVERIFIED", "generated_token_ids": generated,
                   "prompt_tokens": len(tokens), "plan": plan.to_dict(),
                   "reader": weights.stats(), "allocations": ledger.snapshot(),
+                  "expanded_cache": decoder._expanded_cache.stats(),
+                  "timings": {
+                      "scope": "measured_worker_wall_time; includes reasoning and EOS tokens",
+                      "initialization_seconds": inference_started - request_started,
+                      "prefill_seconds": prefill_seconds,
+                      "time_to_first_token_seconds": first_token_at - request_started if first_token_at is not None else None,
+                      "inference_seconds": inference_ended - inference_started,
+                      "decode_seconds": decode_seconds,
+                      "decode_steps": decode_steps,
+                      "prefill_tokens_per_second": len(tokens) / prefill_seconds if prefill_seconds else None,
+                      "decode_tokens_per_second": decode_steps / decode_seconds if decode_steps and decode_seconds else None},
                   "source_report": analysis["source_report"], **FULL_MODEL_FLAGS,
+                  "prompt_format": prompt_format if tokenizer is not None else "tokens",
                   "note": "Experimental native FP32 backbone output; full-checkpoint numerical parity is unverified"}
-        if tokenizer is not None:
+        if streamer is not None:
             report("output_decoding")
-            result["text"] = tokenizer.decode(generated, skip_special_tokens=True)
+            result.update(streamer.finish(generated, eos_token_ids=source["config"].get("eos_token_id"),
+                                          requested_tokens=parameters.get("generate", 32)))
+        if chat_receipt is not None:
+            result["chat"] = chat_receipt
         if gate:
             report("gpu_finalization")
             gate.finish()
@@ -302,6 +365,11 @@ def launch_runtime(root, settings, action, parameters):
         result, code = execute_runtime(root, settings, action, parameters, directory)
     result.setdefault("elapsed_seconds", time.monotonic() - started)
     if result["status"] in ("ERROR", "INTERRUPTED"):
+        if action == "generate":
+            from .chat import load_partial_response
+            partial = load_partial_response(directory, settings)
+            if partial is not None:
+                result.update(partial)
         last, recovery_error = load_last_progress(directory, settings, action)
         if last is not None:
             result["last_progress"] = last

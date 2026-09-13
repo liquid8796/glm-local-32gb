@@ -33,10 +33,11 @@ public static class CoreOperations
 }
 
 public sealed record CoreRunRequest(AppSettings Settings, string Operation,
-    IReadOnlyList<string> Arguments, string? ConfigPath = null);
-public sealed record CoreOutput(DateTimeOffset Timestamp, string Text, bool IsError = false);
+    IReadOnlyList<string> Arguments, string? ConfigPath = null, ChatRunOptions? Chat = null);
+public sealed record CoreOutput(DateTimeOffset Timestamp, string Text, bool IsError = false, ModelStreamEvent? StreamEvent = null);
 public sealed record CoreRunResult(string RunId, int ExitCode, bool Cancelled, string LogPath,
-    string? ReportPath, DateTimeOffset StartedAt, DateTimeOffset FinishedAt, bool TimedOut = false)
+    string? ReportPath, DateTimeOffset StartedAt, DateTimeOffset FinishedAt, bool TimedOut = false,
+    GenerationResult? Generation = null)
 {
     public string Status => Cancelled ? "Cancelled" : TimedOut ? "Timed out" : ExitCode == 0 ? "Completed" : ExitCode == 2 ? "Needs review" : "Failed";
 }

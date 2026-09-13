@@ -149,7 +149,7 @@ def main(argv=None):
                           help="Revalidate saved evidence and fetch only missing pinned shard headers")
     sub.add_parser("architecture-check", help="Map GLM architecture from metadata catalogue only")
     runtime_plan = sub.add_parser("runtime-plan", help="Estimate streamed checkpoint cache/CPU/GPU budgets from verified metadata")
-    runtime_plan.add_argument("--backend", choices=("cpu", "hybrid"), default="hybrid")
+    runtime_plan.add_argument("--backend", choices=("cpu", "hybrid"), default="cpu")
     runtime_plan.add_argument("--context", type=int, default=4096)
     runtime_plan.add_argument("--generate", type=int, default=32)
     runtime_plan.add_argument("--vram-budget-mib", type=int)
@@ -165,11 +165,20 @@ def main(argv=None):
     prompt = generate.add_mutually_exclusive_group(required=True)
     prompt.add_argument("--tokens", help="Comma-separated integer token IDs")
     prompt.add_argument("--prompt", help="Text prompt; requires a verified local tokenizer")
+    prompt.add_argument("--messages-file", type=Path, help="Bounded JSON array of text chat messages; implies chat format")
+    generate.add_argument("--prompt-format", choices=("raw", "chat"), default=None,
+                          help="Raw completion (default) or verified pinned text chat formatting")
+    generate.add_argument("--reasoning-effort", choices=("low", "high", "max"), default=None,
+                          help="Chat reasoning effort; template default is max (thinking remains enabled)")
+    generate.add_argument("--keep-thinking", action="store_true", help="Retain prior assistant reasoning in chat history")
+    generate.add_argument("--stream-events", action="store_true", help="Emit bounded MODELDESK_EVENT JSON response updates")
     generate.add_argument("--model-directory", type=Path)
-    generate.add_argument("--backend", choices=("cpu", "hybrid"), default="hybrid")
+    generate.add_argument("--backend", choices=("cpu", "hybrid"), default="cpu")
     generate.add_argument("--context", type=int, default=4096)
     generate.add_argument("--generate", type=int, default=32)
     generate.add_argument("--timeout", type=int, default=1800)
+    generate.add_argument("--prefill-batch-size", type=int, choices=range(1, 17), default=16,
+                          help="Bounded layer-wise prompt batch; 1 keeps scalar reference prefill")
     tokenizer = sub.add_parser("tokenizer-check", help="Verify the pinned native tokenizer; optional bounded download, no model weights")
     tokenizer.add_argument("--online", action="store_true")
     tokenizer.add_argument("--model-directory", type=Path)
@@ -194,11 +203,19 @@ def main(argv=None):
                 if not 1 <= args.timeout <= 86400:
                     raise ValueError("Generation timeout must be 1..86400 seconds")
                 if args.tokens is not None:
+                    if args.prompt_format == "chat" or args.reasoning_effort is not None or args.keep_thinking or args.stream_events:
+                        raise ValueError("Token-ID generation does not accept chat or decoded-text streaming options")
                     if len(args.tokens) > 1024 * 1024:
                         raise ValueError("Token argument exceeds 1 MiB")
                     parameters["tokens"] = [int(value) for value in args.tokens.split(",")]
                 if args.prompt is not None and len(args.prompt.encode("utf-8")) > 1024 * 1024:
                     raise ValueError("Prompt exceeds 1 MiB")
+                if args.messages_file is not None and args.prompt_format == "raw":
+                    raise ValueError("--messages-file requires chat format")
+                parameters["prompt_format"] = args.prompt_format or ("chat" if args.messages_file is not None else "raw")
+                if parameters["prompt_format"] != "chat" and (args.reasoning_effort is not None or args.keep_thinking):
+                    raise ValueError("Reasoning effort and thinking history options require chat format")
+                parameters["reasoning_effort"] = args.reasoning_effort or "max"
             action = {"runtime-plan": "plan", "projection-check": "projection", "generate": "generate", "tokenizer-check": "tokenizer"}[args.command]
             return launch_runtime(ROOT, settings, action, parameters)
         if args.command == "metadata-check":

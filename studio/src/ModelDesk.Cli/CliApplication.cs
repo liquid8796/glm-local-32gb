@@ -10,6 +10,8 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
     private readonly TextWriter _out = stdout ?? Console.Out;
     private readonly TextWriter _error = stderr ?? Console.Error;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly HashSet<string> ChatValueOptions = new(StringComparer.Ordinal)
+    { "--prompt", "--messages", "--system", "--profile", "--model-directory", "--context", "--max-tokens", "--timeout", "--backend", "--reasoning" };
 
     public async Task<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
     {
@@ -17,7 +19,8 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
         if (json) args = args[1..];
         // Everything after `core OPERATION` belongs to Python, including values
         // which happen to spell --json. Other commands accept a trailing flag.
-        if (args.Length > 0 && args[0] != "core" && args[^1] == "--json") { json = true; args = args[..^1]; }
+        if (args.Length > 0 && args[0] == "chat") json |= HasChatJsonOption(args);
+        else if (args.Length > 0 && args[0] != "core" && args[^1] == "--json") { json = true; args = args[..^1]; }
         try
         {
             if (args.Length == 0 || args[0] is "help" or "--help" or "-h") { await _out.WriteLineAsync(Help); return 0; }
@@ -25,6 +28,7 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
             if (args[0] == "download") return await DownloadAsync(args[1..], json, cancellationToken);
             if (args[0] == "settings") return await SettingsAsync(args[1..], json, cancellationToken);
             if (args[0] == "reports") return await ReportsAsync(args[1..], json, cancellationToken);
+            if (args[0] == "chat") return await ChatAsync(args[1..], json, cancellationToken);
             if (args[0] == "profiles")
             {
                 var settings = await settingsStore.LoadAsync(cancellationToken);
@@ -67,6 +71,183 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
             else await _error.WriteLineAsync("Error: " + exception.Message);
             return 1;
         }
+    }
+
+    private static bool HasChatJsonOption(string[] args)
+    {
+        for (var index = 1; index < args.Length; index++)
+        {
+            if (args[index] == "--json") return true;
+            if (ChatValueOptions.Contains(args[index])) index++;
+        }
+        return false;
+    }
+
+    private async Task<int> ChatAsync(string[] args, bool json, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        string? prompt = null, messagesPath = null, system = null, profile = null, directory = null;
+        var context = 4096;
+        var maximumTokens = 256;
+        var timeout = 1800;
+        var backend = "cpu";
+        var reasoning = "low";
+        var keepThinking = false;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = 0; index < args.Length; index++)
+        {
+            var option = args[index];
+            if (!seen.Add(option)) throw new ArgumentException($"Chat option {option} was specified more than once.");
+            switch (option)
+            {
+                case "--prompt": prompt = Next(args, ref index); break;
+                case "--messages": messagesPath = Next(args, ref index); break;
+                case "--system": system = Next(args, ref index); break;
+                case "--profile": profile = Next(args, ref index); break;
+                case "--model-directory": directory = Next(args, ref index); break;
+                case "--context": context = Integer(Next(args, ref index), 1, int.MaxValue, "context"); break;
+                case "--max-tokens": maximumTokens = Integer(Next(args, ref index), 1, int.MaxValue, "max-tokens"); break;
+                case "--timeout": timeout = Integer(Next(args, ref index), 1, 86400, "timeout"); break;
+                case "--backend": backend = Next(args, ref index); break;
+                case "--reasoning": reasoning = Next(args, ref index); break;
+                case "--keep-thinking": keepThinking = true; break;
+                case "--json": break;
+                default: throw new ArgumentException($"Unknown chat option: {option}");
+            }
+        }
+        if ((prompt is null) == (messagesPath is null)) throw new ArgumentException("Chat requires either --prompt TEXT or --messages FILE.");
+        if (messagesPath is not null && system is not null) throw new ArgumentException("--system is only accepted with --prompt; put system messages inside the history file.");
+        if (backend is not ("cpu" or "hybrid")) throw new ArgumentException("Chat backend must be cpu or hybrid.");
+        if (reasoning is not ("low" or "high" or "max")) throw new ArgumentException("Reasoning effort must be low, high or max.");
+        if (maximumTokens > context) throw new ArgumentException("--max-tokens must not exceed --context.");
+        if (profile is not null && string.IsNullOrWhiteSpace(profile)) throw new ArgumentException("Choose a nonempty profile key.");
+        if (directory is not null && string.IsNullOrWhiteSpace(directory)) throw new ArgumentException("Choose a nonempty model directory.");
+
+        IReadOnlyList<ChatMessage> messages = messagesPath is not null
+            ? await ReadChatMessagesAsync(messagesPath, cancellationToken)
+            : system is null ? [new("user", prompt!)] : [new("system", system), new("user", prompt!)];
+        var chat = new ChatRunOptions(messages, reasoning, keepThinking).ValidateAndSnapshot();
+        var settings = await settingsStore.LoadAsync(cancellationToken);
+        if (profile is not null) settings = settings with { Profile = profile.Trim() };
+        List<string> arguments = ["--backend", backend, "--context", context.ToString(CultureInfo.InvariantCulture),
+            "--generate", maximumTokens.ToString(CultureInfo.InvariantCulture), "--timeout", timeout.ToString(CultureInfo.InvariantCulture)];
+        if (directory is not null) arguments.AddRange(["--model-directory", directory]);
+
+        var accumulator = new GenerationAccumulator();
+        var outputGate = new object();
+        var shownAssistant = "";
+        var shownReasoning = "";
+        var reasoningLineOpen = false;
+        void CloseReasoningLine()
+        {
+            if (!reasoningLineOpen) return;
+            _error.WriteLine(); reasoningLineOpen = false;
+        }
+        void ShowAssistant(string text)
+        {
+            if (text == shownAssistant) return;
+            if (text.StartsWith(shownAssistant, StringComparison.Ordinal)) _out.Write(TerminalText(text[shownAssistant.Length..]));
+            else { _out.WriteLine(); _out.WriteLine("[assistant revised]"); _out.Write(TerminalText(text)); }
+            shownAssistant = text; _out.Flush();
+        }
+        void ShowReasoning(string text)
+        {
+            if (!keepThinking || text == shownReasoning) return;
+            var append = text.StartsWith(shownReasoning, StringComparison.Ordinal);
+            if (!append) { CloseReasoningLine(); _error.Write("[reasoning revised] "); }
+            else if (!reasoningLineOpen) _error.Write("[reasoning] ");
+            _error.Write(TerminalText(append ? text[shownReasoning.Length..] : text));
+            shownReasoning = text; reasoningLineOpen = true; _error.Flush();
+        }
+        var progress = new InlineProgress<CoreOutput>(message =>
+        {
+            lock (outputGate)
+            {
+                if (message.StreamEvent is not { } streamEvent)
+                { CloseReasoningLine(); _error.WriteLine(message.Text); return; }
+                if (!accumulator.Apply(streamEvent))
+                { CloseReasoningLine(); _error.WriteLine("Ignored an inconsistent model stream update; the final report remains authoritative."); return; }
+                if (json)
+                { _error.WriteLine(JsonSerializer.Serialize(streamEvent, ChatRunOptions.JsonOptions)); return; }
+                var snapshot = accumulator.Snapshot();
+                ShowAssistant(snapshot.Text); ShowReasoning(snapshot.Reasoning);
+            }
+        });
+        try
+        {
+            var result = await core.RunAsync(new CoreRunRequest(settings, "generate", arguments, Chat: chat), progress, cancellationToken);
+            lock (outputGate)
+            {
+                if (result.Generation is not null) accumulator.Reconcile(result.Generation);
+                var normalized = accumulator.HasStarted ? accumulator.Snapshot() : new GenerationResult("", "", "missing_response", false, 0, "INCOMPLETE_RESPONSE");
+                if (result.Cancelled || result.TimedOut || result.ExitCode != 0)
+                    normalized = normalized with { AssistantResponseComplete = false };
+                result = result with { Generation = normalized,
+                    ExitCode = result.ExitCode == 0 && !normalized.AssistantResponseComplete ? 2 : result.ExitCode };
+                accumulator.Reconcile(normalized);
+                if (!json && accumulator.HasStarted)
+                {
+                    var final = accumulator.Snapshot(); ShowAssistant(final.Text); ShowReasoning(final.Reasoning);
+                    CloseReasoningLine();
+                    var state = result.Cancelled ? "Cancelled" : result.TimedOut ? "Timed out" : final.AssistantResponseComplete ? result.Status : "Incomplete response";
+                    _error.WriteLine($"[{state}] {final.GeneratedTokens} tokens · stop: {final.StopReason ?? "unknown"}");
+                }
+                else if (!json) _error.WriteLine($"[{result.Status}] No structured assistant response was returned.");
+            }
+            if (json) await Write(result, true);
+            return result.Cancelled ? 130 : result.ExitCode;
+        }
+        finally
+        {
+            lock (outputGate)
+            {
+                if (!json && shownAssistant.Length > 0 && !shownAssistant.EndsWith('\n')) _out.WriteLine();
+                CloseReasoningLine();
+            }
+        }
+    }
+
+    private static string TerminalText(string value)
+    {
+        if (!value.Any(character => char.IsControl(character) && character is not ('\n' or '\t'))) return value;
+        var text = new System.Text.StringBuilder();
+        for (var index = 0; index < value.Length; index++)
+        {
+            var character = value[index];
+            if (character == '\r' && index + 1 < value.Length && value[index + 1] == '\n') continue;
+            if (char.IsControl(character) && character is not ('\n' or '\t')) text.Append("\\u").Append(((int)character).ToString("x4", CultureInfo.InvariantCulture));
+            else text.Append(character);
+        }
+        return text.ToString();
+    }
+
+    private static async Task<IReadOnlyList<ChatMessage>> ReadChatMessagesAsync(string path, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Choose a messages JSON file.");
+        path = Path.GetFullPath(path);
+        var attributes = File.GetAttributes(path);
+        if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
+            throw new ArgumentException("Chat messages must be a regular JSON file.");
+        await using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous);
+        if (!input.CanSeek || input.Length is < 1 or > ChatRunOptions.MaximumBytes)
+            throw new ArgumentException("Chat messages JSON must contain 1 byte to 1 MiB.");
+        var raw = new byte[(int)input.Length];
+        await input.ReadExactlyAsync(raw, cancellationToken);
+        ReadOnlyMemory<byte> json = raw;
+        if (raw.AsSpan().StartsWith(new byte[] { 0xEF, 0xBB, 0xBF })) json = raw.AsMemory(3);
+        using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 8 });
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+            throw new ArgumentException("Messages JSON must be an array of chat messages.");
+        foreach (var message in document.RootElement.EnumerateArray())
+        {
+            if (message.ValueKind != JsonValueKind.Object) throw new ArgumentException("Each chat message must be an object.");
+            var fields = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var field in message.EnumerateObject())
+                if (!fields.Add(field.Name) || field.Name is not ("role" or "content" or "reasoning_content"))
+                    throw new ArgumentException("Chat messages contain duplicate or unsupported fields; only text role/content/reasoning_content are accepted.");
+        }
+        return JsonSerializer.Deserialize<ChatMessage[]>(json.Span, ChatRunOptions.JsonOptions)
+            ?? throw new ArgumentException("Messages JSON cannot be null.");
     }
 
     private async Task<int> HubAsync(string[] args, bool json, CancellationToken cancellationToken)
@@ -216,6 +397,13 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
           Keys: root, python, profile, download-folder, runtime-folder, parallel, connections,
                 limit-mib, ram-mib, cpu-percent, gpu-index, gpu-percent, gpu-window, theme
         profiles
+        chat (--prompt TEXT | --messages FILE) [--system TEXT]
+             [--profile KEY] [--model-directory DIR] [--backend cpu|hybrid]
+             [--context TOKENS] [--max-tokens TOKENS] [--timeout SECONDS]
+             [--reasoning low|high|max] [--keep-thinking] [--json]
+          Defaults: context 4096, max-tokens 256, timeout 1800, backend cpu, reasoning low.
+          Messages file: JSON array, at most 1 MiB; system/user/assistant text only.
+          --keep-thinking retains prior reasoning and shows labeled live reasoning on stderr.
         core [--profile KEY | --config FILE] OPERATION [PYTHON_ARGUMENTS...]
           doctor, policy-check, monitor, runtime-plan, generate, metadata-check,
           architecture-check, projection-check, tokenizer-check, probe, mini,
@@ -224,6 +412,7 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
         reports read PATH
 
         Prefix --json for structured output; progress goes to stderr. Ctrl+C cancels.
+        Chat stdout streams assistant text; suffix corrections are marked [assistant revised].
         Exit 2 from the core means review/blocked readiness and is preserved.
         Tokens: configure in the GUI or use HF_TOKEN; never put a token in arguments.
         Downloading a repository does not establish Python inference compatibility.

@@ -1,10 +1,10 @@
-# GLM NVFP4 — 0.10.1
+# GLM NVFP4 — 0.11.0
 
 Đã thêm `dealignai/GLM-5.3-ABLITERATED-NVFP4` và đặt làm profile mặc định. Revision cố định: `371bdb985d0124e76348c91e4a8fcf3a9d719d09`. Profile FP8 trước đây được giữ tại `config/models/cybersecurity-fp8.json`; NVFP4 tại `config/models/abliterated-nvfp4.json`.
 
-Core 0.10.1 chạy dense BF16/F16/F32 bằng native CPU với cùng thứ tự nhân/cộng FP32 theo tile. Reader giữ tối đa 8 MiB các row band còn mã hóa, đọc chúng bằng các lần I/O không quá 64 KiB; không giữ toàn matrix hay expert bank. Bộ đệm được hạch toán trong planner và allocation ledger. `generate` ghi tiến độ khởi tạo/prefill/decode/layer/projection ra stdout và `progress.json`; khi timeout, `result.json` có `timed_out`, `error_type`, thời gian đã chạy và giai đoạn cuối hợp lệ. Đây là tiến độ thực thi, chưa phải API streaming token.
+Core 0.11.0 thêm chat template đã kiểm chứng, streaming assistant/reasoning và prefill theo lô. Native CPU xử lý song song theo hàng và SIMD giữa các vector độc lập, giữ thứ tự FP32 của từng kết quả. Reader dùng handle bảo vệ trên Windows để tránh kiểm tra lại filesystem trên mỗi lần đọc khi tệp đang được khóa chống thay đổi. Bộ đệm dải trọng số tối đa 8 MiB, các lần I/O không quá 64 KiB và các cache đều được hạch toán. Xem [hướng dẫn hội thoại](CONVERSATION.md).
 
-NVFP4 trên CPU gom tối đa 128 hàng × 16.384 cột logic vào một lần gọi native; bên trong vẫn tính các subtotal 128 cột và cộng FP32 đúng thứ tự cũ. Payload được đọc thành các đoạn không quá 64 KiB, xử lý rồi giải phóng từng band. Scratch 5 MiB được lease riêng và cộng vào planner. Đường hybrid và kernel tile cũ vẫn giữ nguyên; mức tăng tốc của một kernel không xác nhận tốc độ end-to-end.
+NVFP4 trên CPU gom tối đa 128 hàng × 16.384 cột logic vào một lần gọi native; bên trong vẫn tính subtotal 128 cột và cộng FP32 đúng thứ tự cũ. Tối đa 16 vector đầu vào chia sẻ dải trọng số. Scratch NVFP4 5 MiB, dense 33 MiB và workspace prefill 128 MiB được cộng vào planner. Hybrid cũng dùng dải native CPU cho dense; đường expert CUDA vẫn dùng kernel tile. Mặc định chạy CPU; mức tăng tốc một projection không xác nhận tốc độ toàn model.
 
 ## Chạy trên máy này
 
@@ -39,7 +39,7 @@ Chỉ routed experts thuộc các layer MoE của 78 layer backbone được lư
 
 Runtime hiện là **giải mã weight NVFP4 rồi tính FP32**, với `activation_quantization="none"`. Nó xác minh input_scale hữu hạn/dương nhưng không dùng nó để scale weight; không mô phỏng W4A4 activation hoặc FP8 KV-cache của NVIDIA/vLLM. Không dùng kết quả fallback để tuyên bố nativeW4A4parity.
 
-Mỗi tile tối đa 128×128 phần tử: 8.192 byte weight, 1.024 byte scale; mỗi lần đọc ≤64 KiB và tối đa 2 file mở. CPU/CUDA xử lý xen kẽ hàng tile, GPU luôn qua telemetry gate và ngân sách launch. Reader không giữ cả matrix/layer/expert bank đã giải mã. Cache decoder vẫn là FP32 latent MLA/DSA. Planner với context 4096 ước tính 2,95 GB gồm 2 GiB headroom; đây không phải phép đo full model.
+Mỗi tile tối đa 128×128 phần tử: 8.192 byte weight, 1.024 byte scale; mỗi lần đọc ≤64 KiB và tối đa 2 shard mở, thêm hai handle bảo vệ config/index trên Windows. GPU luôn qua telemetry gate và ngân sách launch. Reader không giữ cả matrix/layer/expert bank đã giải mã. Decoder dùng FP32 latent MLA/DSA và cache K/V mở rộng có giới hạn 256 token mỗi layer. Chạy lại `runtime-plan` để lấy ước lượng bao gồm các cache mới; ước lượng không phải phép đo full model.
 
 ## Kiểm chứng và phần chưa nghiệm thu
 

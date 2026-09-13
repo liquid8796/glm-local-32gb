@@ -228,7 +228,8 @@ class RuntimeWeightsTests(unittest.TestCase):
 
     def test_local_metadata_change_after_open_fails_closed(self):
         directory, _ = prepare_runtime_fixture(self.root)
-        with self.weights() as weights:
+        # Exercise the fingerprint fallback independently of Windows sharing locks.
+        with patch("glm_local.runtime_weights._seal_local_document", return_value=None), self.weights() as weights:
             with (directory / "config.json").open("ab") as stream:
                 stream.write(b" ")
             with self.assertRaisesRegex(SafeTensorError, "changed since validation"):

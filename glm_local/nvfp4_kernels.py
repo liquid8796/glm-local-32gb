@@ -11,12 +11,16 @@ the existing Driver API context ownership and also supports its FP8 method.
 """
 
 import ctypes as C
+from array import array
+from contextlib import nullcontext
 import math
 import os
 from pathlib import Path
 import sys
 
-from .cpu_probe import _finite_float32
+from .cpu_probe import (_finite_float32, _NativeRowPool, _prepare_row_batch,
+                        _validate_prepared_batch, _is_native_float32_array,
+                        _owned_float32_buffer, MAX_ROW_BATCH)
 from .cuda_probe import CudaProbeError, CudaTileBackend, MAX_OPERATIONS, _cleanup_errors
 from .nvfp4_blocks import BLOCK, TILE, decode_e4m3_scale
 
@@ -32,7 +36,7 @@ class _PreparedNVFP4Vector:
     __slots__ = ("buffer",)
 
     def __init__(self, values):
-        self.buffer = (C.c_float * len(values))(*values)
+        self.buffer = _owned_float32_buffer(values)
 
     def __len__(self):
         return len(self.buffer)
@@ -67,7 +71,9 @@ class NativeNVFP4CpuBackend:
 
     activation_quantization = "none"
 
-    def __init__(self, dll_path=None):
+    def __init__(self, dll_path=None, *, row_band_threads=8):
+        if type(row_band_threads) is not int or not 1 <= row_band_threads <= 8:
+            raise ValueError("row_band_threads must be an integer from1 to8")
         self._dll = None
         if os.name != "nt" or C.sizeof(C.c_void_p) != 8:
             raise RuntimeError("The native NVFP4 CPU backend requires 64-bit Windows Python")
@@ -93,6 +99,19 @@ class NativeNVFP4CpuBackend:
             row_band.argtypes = list(dll.nvfp4_cpu_matvec_tile.argtypes)
             row_band.restype = C.c_int
         self.supports_nvfp4_row_band = row_band is not None
+        parallel = getattr(dll, "nvfp4_cpu_matvec_row_band_parallel", None)
+        if parallel is not None:
+            parallel.argtypes = list(dll.nvfp4_cpu_matvec_tile.argtypes) + [C.c_void_p]
+            parallel.restype = C.c_int
+        many = getattr(dll, "nvfp4_cpu_matvec_row_band_many", None)
+        self.supports_nvfp4_row_band_many = many is not None
+        if many is not None:
+            many.argtypes = [C.POINTER(C.c_uint8), C.c_size_t, C.c_int, C.c_int, C.c_int,
+                C.POINTER(C.c_uint8), C.c_size_t, C.POINTER(C.c_float), C.c_size_t, C.c_float,
+                C.POINTER(C.c_float), C.c_size_t, C.c_void_p]
+            many.restype = C.c_int
+        self._row_pool = _NativeRowPool(dll, "nvfp4_cpu", row_band_threads)
+        self.row_band_threads = self._row_pool.threads if parallel is not None else 1
         info = dll.nvfp4_cpu_build_info()
         if not info:
             raise RuntimeError("Native NVFP4 DLL returned empty build metadata")
@@ -101,7 +120,9 @@ class NativeNVFP4CpuBackend:
             activation_quantization="none", native_nvfp4_instructions=False,
             arithmetic="FP32 combined scales, weight decode, products and sequential reduction",
             max_tile_rows=TILE, max_tile_cols=TILE, threads=1, full_model_inference=False,
-            row_band_available=self.supports_nvfp4_row_band, max_row_band_columns=MAX_ROW_BAND_COLUMNS)
+            row_band_available=self.supports_nvfp4_row_band, max_row_band_columns=MAX_ROW_BAND_COLUMNS,
+            row_band_many_available=self.supports_nvfp4_row_band_many, max_row_batch=MAX_ROW_BATCH,
+            row_band_threads=self.row_band_threads, thread_pool_scope="per-instance; caller included; large row bands only")
         self._dll = dll
 
     def _require_open(self):
@@ -137,20 +158,65 @@ class NativeNVFP4CpuBackend:
             length = len(vector)
             if not 16 <= length <= MAX_ROW_BAND_COLUMNS or length % BLOCK:
                 raise ValueError("NVFP4 row-band vector length must be a multiple of 16 up to 16384")
+            if _is_native_float32_array(vector):
+                return _PreparedNVFP4Vector(vector)
             values = [_finite_float32(vector[index], f"vector[{index}]") for index in range(length)]
         except (TypeError, IndexError, KeyError) as error:
             raise ValueError("NVFP4 vector must be an indexable finite numeric sequence") from error
         return _PreparedNVFP4Vector(values)
 
+    def prepare_nvfp4_batch(self, vectors):
+        self._require_open()
+        return _prepare_row_batch(vectors, multiple=BLOCK)
+
+    def matvec_nvfp4_row_band_many(self, packed, rows, cols, scales, prepared, global_scale):
+        with self._row_pool.lock:
+            dll = self._require_open()
+            if type(rows) is not int or not 1 <= rows <= TILE:
+                raise ValueError("NVFP4 row batch must contain 1..128 rows")
+            if type(cols) is not int or not 16 <= cols <= MAX_ROW_BAND_COLUMNS or cols % BLOCK:
+                raise ValueError("NVFP4 row batch columns must be a multiple of 16 up to 16384")
+            if type(packed) not in (bytes, bytearray) or len(packed) != rows * (cols // 2):
+                raise ValueError("NVFP4 row batch packed byte count differs from shape")
+            if type(scales) not in (bytes, bytearray) or len(scales) != rows * (cols // BLOCK):
+                raise ValueError("NVFP4 row batch scale byte count differs from shape")
+            _validate_prepared_batch(prepared, cols)
+            scale = _finite_float32(global_scale, "NVFP4 global weight scale", positive=True)
+            function = getattr(dll, "nvfp4_cpu_matvec_row_band_many", None)
+            if function is None:
+                raise RuntimeError("NVFP4 CPU DLL lacks SIMD input batching. Run build-native.bat")
+            pointer = self._row_pool.pointer(rows > 1 and rows * cols * prepared.batch >= 65536)
+            weight_storage, scale_storage = C.c_uint8 * len(packed), C.c_uint8 * len(scales)
+            weights_buffer = weight_storage.from_buffer(packed) if type(packed) is bytearray else weight_storage.from_buffer_copy(packed)
+            scales_buffer = scale_storage.from_buffer(scales) if type(scales) is bytearray else scale_storage.from_buffer_copy(scales)
+            count = rows * prepared.batch
+            output = (C.c_float * count)()
+            status = function(weights_buffer, len(packed), rows, cols, prepared.batch, scales_buffer, len(scales),
+                prepared.buffer, len(prepared.buffer), scale, output, count, pointer)
+            if status in (1, 2):
+                raise ValueError("Native NVFP4 row batch rejected arguments" if status == 1 else
+                                 "Native NVFP4 row batch encountered non-finite FP32 values")
+            if status:
+                raise RuntimeError(f"Native NVFP4 row batch returned status {status}")
+            if not all(math.isfinite(value) for value in output):
+                raise ValueError("Native NVFP4 row batch returned non-finite FP32 values")
+            return [array("f", (output[row * prepared.batch + lane] for row in range(rows)))
+                    for lane in range(prepared.batch)]
+
     def matvec_nvfp4_row_band(self, packed, rows, cols, scales, vector, global_scale):
+        pool = getattr(self, "_row_pool", None)
+        with pool.lock if pool is not None else nullcontext():
+            return self._matvec_nvfp4_row_band(packed, rows, cols, scales, vector, global_scale, pool)
+
+    def _matvec_nvfp4_row_band(self, packed, rows, cols, scales, vector, global_scale, pool):
         dll = self._require_open()
         if type(rows) is not int or not 1 <= rows <= TILE:
             raise ValueError("NVFP4 row band must contain 1..128 rows")
         if type(cols) is not int or not 16 <= cols <= MAX_ROW_BAND_COLUMNS or cols % BLOCK:
             raise ValueError("NVFP4 row-band columns must be a multiple of 16 up to 16384")
-        if type(packed) is not bytes or len(packed) != rows * (cols // 2):
+        if type(packed) not in (bytes, bytearray) or len(packed) != rows * (cols // 2):
             raise ValueError("NVFP4 row-band packed byte count differs from shape")
-        if type(scales) is not bytes or len(scales) != rows * (cols // BLOCK):
+        if type(scales) not in (bytes, bytearray) or len(scales) != rows * (cols // BLOCK):
             raise ValueError("NVFP4 row-band scale byte count differs from shape")
         # Both byte scans run in C; valid scales are exactly codes0..126.
         # The native boundary also validates every byte independently.
@@ -163,14 +229,19 @@ class NativeNVFP4CpuBackend:
         if len(prepared) != cols:
             raise ValueError("NVFP4 vector length must equal row-band columns")
         scale = _finite_float32(global_scale, "NVFP4 global weight scale", positive=True)
-        function = getattr(dll, "nvfp4_cpu_matvec_row_band", None)
+        parallel = getattr(dll, "nvfp4_cpu_matvec_row_band_parallel", None)
+        function = parallel or getattr(dll, "nvfp4_cpu_matvec_row_band", None)
         if function is None:
             raise RuntimeError("NVFP4 CPU DLL lacks row-band batching. Run build-native.bat")
-        weights_buffer = (C.c_uint8 * len(packed)).from_buffer_copy(packed)
-        scales_buffer = (C.c_uint8 * len(scales)).from_buffer_copy(scales)
+        pointer = pool.pointer(rows > 1 and rows * cols >= 65536) if pool is not None else C.c_void_p()
+        weight_storage = C.c_uint8 * len(packed)
+        scale_storage = C.c_uint8 * len(scales)
+        weights_buffer = weight_storage.from_buffer(packed) if type(packed) is bytearray else weight_storage.from_buffer_copy(packed)
+        scales_buffer = scale_storage.from_buffer(scales) if type(scales) is bytearray else scale_storage.from_buffer_copy(scales)
         output = (C.c_float * rows)()
-        status = function(weights_buffer, len(packed), rows, cols, scales_buffer, len(scales),
-                          prepared.buffer, cols, scale, output, rows)
+        arguments = (weights_buffer, len(packed), rows, cols, scales_buffer, len(scales),
+                     prepared.buffer, cols, scale, output, rows)
+        status = function(*arguments, pointer) if parallel is not None else function(*arguments)
         if status == 1:
             raise ValueError("Native NVFP4 CPU backend rejected row-band arguments")
         if status == 2:
@@ -183,7 +254,11 @@ class NativeNVFP4CpuBackend:
         return result
 
     def close(self):
-        self._dll = None
+        pool = getattr(self, "_row_pool", None)
+        with pool.lock if pool is not None else nullcontext():
+            if pool is not None:
+                pool.close()
+            self._dll = None
 
     def __enter__(self):
         self._require_open()

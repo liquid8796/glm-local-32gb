@@ -7,7 +7,7 @@ reader, ownership is single-threaded; ledger accounting is not an RSS limit.
 """
 from collections import OrderedDict
 
-from .safetensor_reader import MAX_READ_BYTES, MAX_TILE_EDGE, SafeTensorError, _uint
+from .safetensor_reader import MAX_READ_BYTES, MAX_READ_SPAN_BYTES, MAX_TILE_EDGE, SafeTensorError, _uint
 
 
 DEFAULT_ROW_BAND_CACHE_BYTES = 8 * 1024**2
@@ -50,7 +50,8 @@ class RowBandCacheReader:
                             identity_checks=0, invalidations=0, fallback_tiles=0,
                             coalesced_read_calls=0, coalesced_read_bytes=0,
                             max_coalesced_read_bytes=0, peak_retained_bytes=0,
-                            tile_calls=0, tile_bytes_returned=0, passthrough_read_calls=0)
+                            tile_calls=0, tile_bytes_returned=0, passthrough_read_calls=0,
+                            cache_span_calls=0, cache_span_bytes=0, passthrough_span_calls=0)
 
     @property
     def tensors(self):
@@ -98,6 +99,40 @@ class RowBandCacheReader:
         self._counts["passthrough_read_calls"] += 1
         return self._source.read_bytes(name, offset, count)
 
+    def read_span(self, name, offset, count):
+        """Return an owned bounded span; its lifetime is accounted by the caller."""
+        self._require_open()
+        if not isinstance(name, str):
+            raise SafeTensorError("Tensor name must be a string")
+        info = self.tensors[name]
+        offset = _uint(offset, info.nbytes, "Tensor-relative byte offset")
+        count = _uint(count, MAX_READ_SPAN_BYTES, "Read span byte count")
+        if offset % info.itemsize or count % info.itemsize:
+            raise SafeTensorError("Byte offset and count must align with tensor itemsize")
+        if count > info.nbytes - offset:
+            raise SafeTensorError("Read extends beyond tensor bounds")
+        self._counts["passthrough_span_calls"] += 1
+        try:
+            span = getattr(self._source, "read_span", None)
+            if callable(span):
+                data = span(name, offset, count)
+                if type(data) is not bytearray or len(data) != count:
+                    raise SafeTensorError("Span source must return an owned bytearray of the requested size")
+                return data
+            self.assert_tensor_unchanged(name)
+            data = bytearray(count)
+            for at in range(0, count, MAX_READ_BYTES):
+                size = min(MAX_READ_BYTES, count - at)
+                raw = self._source.read_bytes(name, offset + at, size)
+                if type(raw) is not bytes or len(raw) != size:
+                    raise SafeTensorError("Span fallback returned an invalid bounded read")
+                data[at:at + size] = raw
+            self.assert_tensor_unchanged(name)
+            return data
+        except BaseException:
+            self._clear()
+            raise
+
     def _load_band(self, name, row, rows, info, size):
         # Keeping old bands of this tensor could eventually retain its full matrix.
         if name in self._bands:
@@ -108,18 +143,26 @@ class RowBandCacheReader:
         lease = self._ledger.reserve(size, label="row_band_cache") if self._ledger else None
         payload = None
         try:
-            payload = bytearray(size)
             start = row * info.shape[1] * info.itemsize
-            for offset in range(0, size, MAX_READ_BYTES):
-                count = min(MAX_READ_BYTES, size - offset)
-                raw = self._source.read_bytes(name, start + offset, count)
-                if not isinstance(raw, bytes) or len(raw) != count:
-                    raise SafeTensorError("Row-band source returned an invalid bounded read")
-                self._counts["coalesced_read_calls"] += 1
-                self._counts["coalesced_read_bytes"] += count
-                self._counts["max_coalesced_read_bytes"] = max(self._counts["max_coalesced_read_bytes"], count)
-                payload[offset:offset + count] = raw
-                del raw
+            span = getattr(self._source, "read_span", None)
+            if callable(span):
+                payload = span(name, start, size)
+                if type(payload) is not bytearray or len(payload) != size:
+                    raise SafeTensorError("Row-band span must return an owned bytearray of the requested size")
+                self._counts["cache_span_calls"] += 1
+                self._counts["cache_span_bytes"] += size
+            else:
+                payload = bytearray(size)
+                for offset in range(0, size, MAX_READ_BYTES):
+                    count = min(MAX_READ_BYTES, size - offset)
+                    raw = self._source.read_bytes(name, start + offset, count)
+                    if not isinstance(raw, bytes) or len(raw) != count:
+                        raise SafeTensorError("Row-band source returned an invalid bounded read")
+                    self._counts["coalesced_read_calls"] += 1
+                    self._counts["coalesced_read_bytes"] += count
+                    self._counts["max_coalesced_read_bytes"] = max(self._counts["max_coalesced_read_bytes"], count)
+                    payload[offset:offset + count] = raw
+                    del raw
             self.assert_tensor_unchanged(name)
             band = _Band(row, rows, info, payload, lease)
             self._bands[name] = band

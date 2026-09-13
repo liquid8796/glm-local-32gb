@@ -259,7 +259,7 @@ class StreamingDecoderTests(unittest.TestCase):
                 decoder.step(2)
             self.assertEqual(decoder.position, 1)
             self.assertEqual(decoder.ledger.snapshot()["cpu"]["used_bytes"], before["cpu"]["used_bytes"])
-            self.assertEqual(decoder.ledger.snapshot()["active_leases"], 1)
+            self.assertEqual(decoder.ledger.snapshot()["active_leases"], before["active_leases"])
             weights.fail_name = None
             self.assertEqual(decoder.step(2), fresh.step(2))
 

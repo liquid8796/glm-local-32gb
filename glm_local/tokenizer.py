@@ -175,7 +175,7 @@ def _captured_manifest(root, settings):
             or architecture._fingerprint(snapshot_path) != snapshot_identity):
         raise MetadataError("Tokenizer metadata evidence changed while selecting artifacts")
     manifest = {"id": model["id"], "sha": model["sha"],
-                "siblings": [item for item in model["siblings"] if item.get("rfilename") in ARTIFACTS]}
+                "siblings": [item for item in model["siblings"] if item.get("rfilename") in (*ARTIFACTS, "chat_template.jinja")]}
     return manifest, {"source_report": digest, "snapshot": snapshot_digest,
                       "catalogue": analysis["catalogue"], "source": str(source_path)}
 
@@ -327,6 +327,34 @@ class LocalTokenizer:
         if len(result) > 16 * MAX_TEXT_BYTES or len(result.encode("utf-8")) > 16 * MAX_TEXT_BYTES:
             raise ValueError("Decoded tokenizer text exceeds the 16-MiB output bound")
         return result
+
+    def decode_stream(self, skip_special_tokens=True):
+        if type(skip_special_tokens) is not bool:
+            raise ValueError("skip_special_tokens must be boolean")
+        from tokenizers.decoders import DecodeStream
+        return LocalTokenStream(self, DecodeStream(skip_special_tokens=skip_special_tokens))
+
+
+class LocalTokenStream:
+    """Native incremental UTF-8 decoding with the same validated vocabulary."""
+    def __init__(self, tokenizer, decoder):
+        self._tokenizer, self._decoder = tokenizer, decoder
+        self._count = 0
+        self._output_bytes = 0
+
+    def push(self, token):
+        if self._count >= self._tokenizer.max_tokens:
+            raise ValueError("Incremental decoder token count exceeds its bound")
+        self._tokenizer._ids([token])
+        self._count += 1
+        chunk = self._decoder.step(self._tokenizer._native, token)
+        if chunk is not None:
+            if not isinstance(chunk, str):
+                raise ValueError("Native incremental decoder returned invalid text")
+            self._output_bytes += len(chunk.encode("utf-8"))
+            if self._output_bytes > 16 * MAX_TEXT_BYTES:
+                raise ValueError("Incremental decoded output exceeds 16 MiB")
+        return chunk
 
 
 def load_tokenizer(model_directory, config, *, model_id, revision, manifest):

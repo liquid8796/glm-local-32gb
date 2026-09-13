@@ -41,6 +41,8 @@ Một operation Python chạy với thư mục làm việc là project core, the
 
 Build native, setup reference và reference tests dùng các wrapper cố định của Python project. Những operation này không chấp nhận đối số shell bổ sung. Adapter ghi `config.json`, `output.log`, `run.json` dưới `reports/modeldesk/runs/<id>/`, giữ mã thoát của core và chỉ liên kết báo cáo phù hợp với tác vụ/model/revision hiện tại. `WindowsProcessJob` quản lý vòng đời cây process; các kiểm tra quota nghiệp vụ của Python vẫn thuộc Python core.
 
+Hội thoại dùng `ChatRunOptions` và `ChatMessage` được validate/snapshot trong Core. Service tạo `messages.json` riêng cho từng lượt, không nhận đường dẫn lịch sử do view tự tạo. `MODELDESK_EVENT` được parse thành sự kiện có kiểu, cập nhật theo vị trí UTF-16 và đối chiếu với báo cáo cuối cùng thuộc đúng run. `GenerationResult` phân biệt phần assistant, suy luận, kết thúc hợp lệ và nội dung chưa hoàn tất. `RunViewModel` chỉ lưu các cặp hoàn tất vào context; lỗi/hủy vẫn giữ phần hiển thị và câu hỏi để thử lại. CLI dùng chung port và DTO. Lịch sử ở cấp ứng dụng, còn mỗi lượt vẫn khởi động một worker Python riêng.
+
 ## Hub, truyền tệp và resume
 
 `HubHttpClientFactory` tạo HttpClient dùng lại, tắt automatic redirects. `HubHttp` quản lý endpoint/redirect, giới hạn response, timeout, HTTP status và phạm vi gửi credential. `HuggingFaceClient` trả model summary, revision đã phân giải, manifest tệp và README dạng văn bản. README được xem như dữ liệu; không tải hoặc thực thi code của repository.

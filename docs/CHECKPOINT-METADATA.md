@@ -1,4 +1,4 @@
-# Checkpoint metadata audit — 0.10.1
+# Checkpoint metadata audit — 0.11.0
 
 ## NVFP4 và nhiều profile ở bản 0.10.0
 

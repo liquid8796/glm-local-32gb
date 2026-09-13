@@ -1,8 +1,8 @@
 """Config-derived residency estimates and bounded allocation accounting.
 
-This module allocates no model, cache or CUDA buffers. It models sequential
-single-token execution with CPU-resident compressed MLA latents, full-indexer
-keys and streamed 128-square weight tiles. The plan is an estimate, not evidence
+This module allocates no model, cache or CUDA buffers. It models bounded
+layer-wise prefill and sequential decoding with CPU-resident MLA latents,
+full-indexer keys, expanded K/V reuse and streamed weight bands. The plan is an estimate, not evidence
 that a checkpoint executes correctly or fits in a measured process. Allocation
 leases account declared payloads before the executor allocates them; they do
 not observe Python, native-library, driver or operating-system allocations.
@@ -17,6 +17,9 @@ from .architecture.mapper import _profile
 from .checkpoint_schema import Findings, quantization_format
 from .runtime_io import DEFAULT_ROW_BAND_CACHE_BYTES
 from .nvfp4_execution import NVFP4_ROW_BAND_SCRATCH_BYTES
+from .runtime_linear import DENSE_ROW_BAND_SCRATCH_BYTES, MAX_LINEAR_BATCH
+from .batched_prefill import PREFILL_SCRATCH_BYTES
+from .expanded_cache import DEFAULT_EXPANDED_CACHE_TOKENS
 
 MAX_BYTES = 2**63 - 1
 TILE_EDGE = 128
@@ -55,6 +58,7 @@ class PlannerSettings:
     device: str = "cpu"
     context_tokens: int = 4096
     max_new_tokens: int = 32
+    expanded_cache_tokens: int = DEFAULT_EXPANDED_CACHE_TOKENS
     block_rows: int = TILE_EDGE
     cache_dtype: str = "float32"
     runtime_headroom_bytes: int = 2 * 1024**3
@@ -232,7 +236,7 @@ class ResidencyPlan:
             "full_model_loaded": False,
             "inference_verified": False,
             "full_model_limits_verified": False,
-            "scope": "Sequential single-token backbone with CPU latent caches and streamed tiles",
+            "scope": "Bounded batched prefill and sequential decode with CPU caches and streamed weight bands",
             "context_tokens": self.settings.context_tokens,
             "max_new_tokens": self.settings.max_new_tokens,
             "model_context_tokens": self.model_context_tokens,
@@ -249,7 +253,9 @@ class ResidencyPlan:
                 "dsa_index_values_per_token_per_full_layer": self.index_key_width,
                 "dsa_index_key_bytes": dict(self.cpu_components)["dsa_index_key_cache"],
                 "indexer_owner_by_layer": list(self.indexer_owners),
-                "expanded_per_head_kv_retained": False,
+                "expanded_per_head_kv_retained": self.settings.expanded_cache_tokens > 0,
+                "expanded_cache_tokens_per_layer": min(self.settings.expanded_cache_tokens, self.settings.context_tokens),
+                "expanded_cache_max_bytes": dict(self.cpu_components)["expanded_mla_cache"],
             },
             "streaming": {
                 "tile_rows": TILE_EDGE, "tile_columns": TILE_EDGE,
@@ -297,6 +303,7 @@ def build_plan(config, settings, *, prompt_tokens=None, model_id=None, revision=
     _integer(settings.vram_budget_bytes, "vram_budget_bytes")
     _integer(settings.context_tokens, "context_tokens", minimum=1, maximum=2**31 - 1)
     _integer(settings.max_new_tokens, "max_new_tokens", maximum=settings.context_tokens)
+    _integer(settings.expanded_cache_tokens, "expanded_cache_tokens", maximum=256)
     _integer(settings.runtime_headroom_bytes, "runtime_headroom_bytes")
     _integer(settings.gpu_headroom_bytes, "gpu_headroom_bytes")
     if not isinstance(settings.device, str) or settings.device not in ("cpu", "hybrid"):
@@ -370,8 +377,12 @@ def build_plan(config, settings, *, prompt_tokens=None, model_id=None, revision=
     cpu_components = (
         ("mla_latent_cache", layers * context * (kvrank + rope) * 4),
         ("dsa_index_key_cache", len(set(owners)) * context * index_dim * 4),
+        ("expanded_mla_cache", layers * min(settings.expanded_cache_tokens, context) * (heads * (nope + value) * 4 + 32)),
         ("encoded_row_band_cache", ENCODED_ROW_BAND_CACHE_BYTES),
         ("nvfp4_row_band_scratch", NVFP4_ROW_BAND_SCRATCH_BYTES if quantization_format(config) == "nvfp4" else 0),
+        ("dense_row_band_scratch", DENSE_ROW_BAND_SCRATCH_BYTES),
+        ("projection_batch_vectors", 4 * MAX_LINEAR_BATCH * (largest_rows + largest_cols) + 2 * 65536),
+        ("prefill_batch_scratch", PREFILL_SCRATCH_BYTES),
         ("token_activations", activations),
         ("attention_and_selection_scratch", scratch),
         ("encoded_tile_copies", encoded_tiles),

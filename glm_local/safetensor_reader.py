@@ -3,17 +3,22 @@
 The 1 MiB header, 2 TiB file, 4096 tensor, rank-eight and metadata limits below
 are local policy, not safetensors format restrictions. Only byte-aligned dtypes
 are supported. Every actual file read and returned tile is at most 64 KiB.
+The explicit read_span API returns an owned buffer of at most 8 MiB, only after
+validating the complete logical read. On Windows its first use upgrades the
+reader to a share-read-only handle which denies writes/deletes until close.
 These allocation bounds are not a claim about total process or system RAM.
 
-File identity, size and timestamps are checked around each read. This catches
-common replacement/truncation/modification, but is not cryptographic content
-verification: safetensors embeds no payload checksum. Do not mutate a file
-while it is open. Reader instances are intended for a single owning thread.
+Unprotected files have identity, size and timestamps checked around each read.
+Protected Windows handles instead enforce immutability through sharing rules;
+their original identity and header are revalidated when acquiring the handle.
+Neither approach is cryptographic payload verification: safetensors embeds no
+payload checksum. Reader instances are intended for a single owning thread.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,6 +29,7 @@ from typing import BinaryIO, Mapping
 
 
 MAX_READ_BYTES = 65536
+MAX_READ_SPAN_BYTES = 8 * 1024**2
 MAX_HEADER_BYTES = 1024 * 1024
 MAX_FILE_BYTES = 2 * 1024**4
 MAX_TENSORS = 4096
@@ -38,6 +44,39 @@ DTYPE_ITEMSIZE = MappingProxyType({
     "I8": 1, "U8": 1, "I16": 2, "U16": 2, "I32": 4, "U32": 4,
     "I64": 8, "U64": 8, "BOOL": 1,
 })
+_WINDOWS_READ_API = None
+
+
+def _open_protected_read(path):
+    """Open one Windows read handle that denies competing writes and deletes."""
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    global _WINDOWS_READ_API
+    if _WINDOWS_READ_API is None:
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        create = kernel.CreateFileW
+        create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                           wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        create.restype = wintypes.HANDLE
+        close = kernel.CloseHandle
+        close.argtypes, close.restype = [wintypes.HANDLE], wintypes.BOOL
+        _WINDOWS_READ_API = create, close
+    create, close = _WINDOWS_READ_API
+    handle = create(str(path), 0x80000000, 0x00000001, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        close(handle)
+        raise
+    try:
+        return os.fdopen(descriptor, "rb", buffering=0)
+    except BaseException:
+        os.close(descriptor)
+        raise
 
 
 class SafeTensorError(ValueError):
@@ -88,6 +127,7 @@ class SafeTensorReader:
     def __init__(self, path: str | os.PathLike[str]):
         self.path = Path(path).absolute()
         self._stream: BinaryIO | None = None
+        self._span_protected = False
         self._tensors: Mapping[str, TensorInfo] = MappingProxyType({})
         self._metadata: Mapping[str, str] = MappingProxyType({})
         self._counters = {
@@ -96,6 +136,13 @@ class SafeTensorReader:
             "max_actual_read_bytes": 0,
             "tensor_read_bytes": 0,
             "tensor_read_calls": 0,
+            "identity_checks": 0,
+            "protected_immutable_checks": 0,
+            "span_read_calls": 0,
+            "span_read_bytes": 0,
+            "span_inner_read_calls": 0,
+            "max_span_bytes": 0,
+            "protected_handle_upgrades": 0,
         }
         try:
             # Check before open to reject FIFO/device paths without blocking.
@@ -131,6 +178,11 @@ class SafeTensorReader:
     def metadata(self) -> Mapping[str, str]:
         return self._metadata
 
+    @property
+    def protected_immutable(self) -> bool:
+        """Whether this live handle denies Windows file writes and deletion."""
+        return self._span_protected and self._stream is not None and not self._stream.closed
+
     def __enter__(self) -> SafeTensorReader:
         self._assert_unchanged()
         return self
@@ -142,10 +194,15 @@ class SafeTensorReader:
         if self._stream is not None:
             self._stream.close()
             self._stream = None
+        self._span_protected = False
 
     def _assert_unchanged(self) -> None:
         if self._stream is None or self._stream.closed:
             raise SafeTensorError("Safetensors reader is closed")
+        if self.protected_immutable:
+            self._counters["protected_immutable_checks"] += 1
+            return
+        self._counters["identity_checks"] += 1
         try:
             descriptor = os.fstat(self._stream.fileno())
             current_path = self.path.stat()
@@ -154,6 +211,34 @@ class SafeTensorReader:
         if (_fingerprint(descriptor) != self._descriptor_identity
                 or _fingerprint(current_path) != self._path_identity):
             raise SafeTensorError("Safetensors file changed since opening")
+
+    def _protect_span_handle(self):
+        if os.name != "nt" or self._span_protected:
+            return
+        try:
+            self._assert_unchanged()
+            assert self._stream is not None
+            # Close before reopening to preserve the catalogue's open-handle bound.
+            # Never refresh the original identities: replacement in this window fails.
+            self._stream.close()
+            self._stream = None
+            self._stream = _open_protected_read(self.path)
+            self._assert_unchanged()
+            # The old handle was closed. Revalidate the bounded header under
+            # the new lock, retaining both original identity baselines.
+            tensors, metadata, header_sha256 = self._tensors, self._metadata, self._header_sha256
+            self._parse_header()
+            self._assert_unchanged()
+            if (self._tensors != tensors or self._metadata != metadata
+                    or self._header_sha256 != header_sha256):
+                raise SafeTensorError("Safetensors header changed while acquiring protected access")
+        except BaseException as error:
+            self.close()
+            if isinstance(error, OSError):
+                raise SafeTensorError("Cannot acquire protected span read access; file changed or is open for writing") from error
+            raise
+        self._span_protected = True
+        self._counters["protected_handle_upgrades"] += 1
 
     def _read_at(self, offset: int, count: int, *, tensor: bool = False) -> bytes:
         if not 1 <= count <= MAX_READ_BYTES:
@@ -178,7 +263,8 @@ class SafeTensorReader:
         return data
 
     def _parse_header(self) -> None:
-        length = struct.unpack("<Q", self._read_at(0, 8))[0]
+        prefix = self._read_at(0, 8)
+        length = struct.unpack("<Q", prefix)[0]
         if not 1 <= length <= MAX_HEADER_BYTES:
             raise SafeTensorError("Header length outside local 1-byte to 1-MiB policy")
         if length > self._file_size - 8:
@@ -190,6 +276,9 @@ class SafeTensorReader:
             chunk = min(MAX_READ_BYTES, length - offset)
             header[offset:offset + chunk] = self._read_at(8 + offset, chunk)
         self._tensors, self._metadata = parse_header_bytes(header, self._file_size)
+        digest = hashlib.sha256(prefix)
+        digest.update(header)
+        self._header_sha256 = digest.hexdigest()
 
     @staticmethod
     def _validate_metadata(metadata: object) -> None:
@@ -289,6 +378,53 @@ class SafeTensorReader:
         self._assert_unchanged()
         return bytes(result)
 
+    def read_span(self, name: str, offset: int, count: int) -> bytearray:
+        """Read an owned <=8-MiB buffer with <=64-KiB actual reads.
+
+        Alignment/bounds are checked before allocation. Before/after validation
+        polls the descriptor/path for unprotected files or checks the lifetime
+        of a Windows deny-write/delete handle. No buffer is returned before the
+        final check. The caller accounts and owns the returned buffer.
+        """
+        tensor = self._tensor(name)
+        offset = _uint(offset, tensor.nbytes, "Tensor-relative byte offset")
+        count = _uint(count, MAX_READ_SPAN_BYTES, "Read span byte count")
+        if offset % tensor.itemsize or count % tensor.itemsize:
+            raise SafeTensorError("Byte offset and count must align with tensor itemsize")
+        if count > tensor.nbytes - offset:
+            raise SafeTensorError("Read extends beyond tensor bounds")
+        if count == 0:
+            self._assert_unchanged()
+            return bytearray()
+        self._protect_span_handle()
+        self._assert_unchanged()
+        data = bytearray(count)
+        assert self._stream is not None
+        self._counters["span_read_calls"] += 1
+        self._counters["max_span_bytes"] = max(self._counters["max_span_bytes"], count)
+        try:
+            self._stream.seek(self._payload_start + tensor.data_offsets[0] + offset)
+            with memoryview(data) as target:
+                for at in range(0, count, MAX_READ_BYTES):
+                    size = min(MAX_READ_BYTES, count - at)
+                    received = self._stream.readinto(target[at:at + size])
+                    if type(received) is not int or not 0 <= received <= size:
+                        raise SafeTensorError("Safetensors span returned an invalid bounded read")
+                    self._counters["actual_read_calls"] += 1
+                    self._counters["actual_read_bytes"] += received
+                    self._counters["tensor_read_calls"] += 1
+                    self._counters["tensor_read_bytes"] += received
+                    self._counters["span_inner_read_calls"] += 1
+                    self._counters["span_read_bytes"] += received
+                    self._counters["max_actual_read_bytes"] = max(self._counters["max_actual_read_bytes"], received)
+                    if received != size:
+                        raise SafeTensorError("Truncated safetensors file during bounded span read")
+        except OSError as error:
+            raise SafeTensorError("Safetensors bounded span read failed") from error
+        finally:
+            self._assert_unchanged()
+        return data
+
     def stats(self) -> dict:
         """Actual I/O counters, not total RAM or whole-checkpoint verification."""
         return {
@@ -297,7 +433,11 @@ class SafeTensorReader:
             "header_bytes": self._header_bytes,
             "tensor_count": len(self._tensors),
             "policy_max_read_bytes": MAX_READ_BYTES,
-            "content_verification": "stat_fingerprint_only_no_checksum",
+            "policy_max_span_bytes": MAX_READ_SPAN_BYTES,
+            "span_handle_protection": "windows_deny_write_delete" if self._span_protected else "identity_before_after",
+            "protected_immutable": self.protected_immutable,
+            "span_validation_scope": "live deny-write/delete handle; otherwise descriptor/path fingerprints around each complete logical span",
+            "content_verification": "header_sha256_and_file_identity_no_payload_checksum",
         }
 
 

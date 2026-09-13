@@ -1,64 +1,88 @@
-<UserControl x:Class="ModelDesk.Desktop.Views.RunView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-    <StackPanel Margin="0,0,12,12">
-      <TextBlock Text="Chạy model cục bộ" Style="{StaticResource PageTitle}" />
-      <TextBlock Text="Lập kế hoạch bộ nhớ trước, sau đó chạy decoder với trọng số đã có trên máy." Style="{StaticResource Muted}" Margin="0,0,0,24" />
-      <Grid>
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="1.6*" />
-          <ColumnDefinition Width="24" />
-          <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
-        <Border Style="{StaticResource Panel}">
-          <StackPanel>
-            <TextBlock Text="Đầu vào" Style="{StaticResource SectionTitle}" />
-            <TextBlock Text="Thư mục trọng số" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
+<UserControl x:Class="ModelDesk.Desktop.Views.RunView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:p="clr-namespace:ModelDesk.Desktop.Presentation">
+  <Grid Margin="0,0,12,12">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <StackPanel Margin="0,0,0,17">
+      <TextBlock Text="Trò chuyện với model cục bộ" Style="{StaticResource PageTitle}"/>
+      <TextBlock Text="Câu trả lời xuất hiện từng phần. Lượt dừng hoặc chưa hoàn tất được giữ lại để xem và gửi lại." Style="{StaticResource Muted}"/>
+    </StackPanel>
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="1.65*"/><ColumnDefinition Width="20"/><ColumnDefinition Width="*" MinWidth="280"/></Grid.ColumnDefinitions>
+      <Border Style="{StaticResource Panel}" Padding="20">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <DockPanel Margin="0,0,0,12">
+            <Button Content="Hội thoại mới" Command="{Binding ResetCommand}" DockPanel.Dock="Right" Style="{StaticResource CompactButton}" AutomationProperties.Name="Bắt đầu hội thoại mới"/>
+            <TextBlock Text="Hội thoại" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          </DockPanel>
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0" p:ConversationScroll.FollowLatest="True">
+            <StackPanel>
+              <TextBlock Text="Nhập tin nhắn đầu tiên bên dưới. Phần suy nghĩ của model được thu gọn riêng." Margin="0,15,0,20">
+                <TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource Muted}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Turns.Count}" Value="0"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+              </TextBlock>
+              <ItemsControl ItemsSource="{Binding Turns}" AutomationProperties.Name="Lịch sử hội thoại">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel Margin="0,0,0,8">
+                      <TextBlock Text="BẠN" Style="{StaticResource FieldLabel}" Margin="0,0,0,6"/>
+                      <TextBox Text="{Binding UserText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="140" VerticalScrollBarVisibility="Auto" BorderThickness="0" AutomationProperties.Name="Tin nhắn đã gửi"/>
+                      <TextBlock Text="TRỢ LÝ" Style="{StaticResource FieldLabel}" Margin="0,14,0,6"/>
+                      <Expander Header="Suy nghĩ của model" IsExpanded="False" Visibility="{Binding HasReasoning, Converter={StaticResource BoolVisibility}}" Margin="0,8,0,0">
+                        <TextBox Text="{Binding Reasoning, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="240" VerticalScrollBarVisibility="Auto" Margin="0,8,0,0" AutomationProperties.Name="Phần suy nghĩ được thu gọn"/>
+                      </Expander>
+                      <TextBlock Text="{Binding State}" Style="{StaticResource Muted}" FontSize="12" Margin="0,7,0,0" ToolTip="{Binding StopReason}"/>
+                      <TextBox Text="{Binding ResponseDisplay, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="39" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" BorderThickness="0" Margin="0,6,0,0" AutomationProperties.Name="Câu trả lời của model"/>
+                      <Button Content="Sao chép" Command="{Binding DataContext.CopyResponseCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" HorizontalAlignment="Right" Margin="0,6,0,0" Style="{StaticResource CompactButton}" AutomationProperties.Name="Sao chép câu trả lời"/>
+                    </StackPanel>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </ScrollViewer>
+          <StackPanel Grid.Row="2" Margin="0,12,0,0">
+            <TextBlock Text="Tin nhắn" Style="{StaticResource FieldLabel}" Margin="0,0,0,6"/>
             <DockPanel>
-              <Button Content="Chọn…" Command="{Binding BrowseCommand}" DockPanel.Dock="Right" Margin="10,0,0,0" />
-              <TextBox Text="{Binding ModelDirectory, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Thư mục trọng số" />
+              <Button Content="{Binding SendLabel}" Command="{Binding GenerateCommand}" Style="{StaticResource Primary}" DockPanel.Dock="Right" Margin="10,0,0,0" VerticalAlignment="Center" AutomationProperties.Name="Gửi tin nhắn hoặc chạy đầu vào"/>
+              <TextBox Text="{Binding Prompt, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsTextInput}" AcceptsReturn="True" TextWrapping="Wrap" Height="58" VerticalScrollBarVisibility="Auto" ToolTip="Ctrl+Enter để gửi. Enter để xuống dòng." AutomationProperties.Name="Nội dung prompt" AutomationProperties.HelpText="Ctrl+Enter để gửi; Enter để xuống dòng.">
+                <TextBox.InputBindings><KeyBinding Key="Enter" Modifiers="Control" Command="{Binding GenerateCommand}"/></TextBox.InputBindings>
+              </TextBox>
             </DockPanel>
-            <TextBlock Text="Nội dung prompt" Style="{StaticResource FieldLabel}" />
-            <TextBox Text="{Binding Prompt, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="145" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Nội dung prompt" />
-            <CheckBox Content="Dùng token ID thay cho prompt" IsChecked="{Binding UseTokens}" />
-            <TextBox Text="{Binding Tokens, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding UseTokens}" ToolTip="Ví dụ: 1,2,3" AutomationProperties.Name="Token ID, phân cách bằng dấu phẩy" />
-            <TextBlock Text="Token ID phân cách bằng dấu phẩy. Prompt văn bản cần tokenizer cục bộ đã xác minh." Style="{StaticResource Muted}" FontSize="12" Margin="0,7,0,0" />
-            <Expander Header="Tham số nâng cao" Margin="0,19,0,0">
+            <TextBlock Text="{Binding HistorySummary}" ToolTip="{Binding HistorySummary}" Style="{StaticResource Muted}" FontSize="11" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,7,0,0"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+      <Border Grid.Column="2" Style="{StaticResource Panel}" Padding="20">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel IsEnabled="{Binding CanConfigure}">
+            <TextBlock Text="Cấu hình chạy" Style="{StaticResource SectionTitle}"/>
+            <TextBlock Text="{Binding ModelDirectory}" ToolTip="{Binding ModelDirectory}" Style="{StaticResource Muted}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" FontSize="11" Margin="0,0,0,4"/>
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <StackPanel><TextBlock Text="Context" Style="{StaticResource FieldLabel}" Margin="0,6,0,4"/><TextBox Text="{Binding Context, UpdateSourceTrigger=PropertyChanged}" ToolTip="Tổng ngân sách token cho lịch sử + tin nhắn hiện tại (kèm mẫu chat) + token sinh thêm." AutomationProperties.Name="Context tokens"/></StackPanel>
+              <StackPanel Grid.Column="2"><TextBlock Text="Token sinh thêm" Style="{StaticResource FieldLabel}" Margin="0,6,0,4"/><TextBox Text="{Binding Generate, UpdateSourceTrigger=PropertyChanged}" ToolTip="Giới hạn token mới gồm cả phần suy nghĩ và phần trả lời hiển thị. Token không tương đương chính xác với số từ." AutomationProperties.Name="Số token sinh thêm"/></StackPanel>
+            </Grid>
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <StackPanel><TextBlock Text="Backend" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/><ComboBox ItemsSource="{Binding Backends}" SelectedItem="{Binding Backend}"/></StackPanel>
+              <StackPanel Grid.Column="2"><TextBlock Text="Mức suy luận" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/><ComboBox ItemsSource="{Binding ReasoningEfforts}" SelectedItem="{Binding ReasoningEffort}" IsEnabled="{Binding IsChatInput}" ToolTip="Low giảm mức suy luận nhưng model vẫn có thể suy nghĩ trước khi trả lời. Phần này cũng dùng ngân sách token sinh thêm." AutomationProperties.Name="Mức suy luận"/></StackPanel>
+            </Grid>
+            <TextBlock Text="Timeout (giây)" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/><TextBox Text="{Binding Timeout, UpdateSourceTrigger=PropertyChanged}" ToolTip="Giới hạn cho toàn bộ lượt chạy. Nếu hết token hoặc thời gian, tăng giới hạn và gửi lại tin nhắn đang giữ trong ô soạn."/>
+            <Button Content="Lập kế hoạch bộ nhớ" Command="{Binding PlanCommand}" Margin="0,14,0,0"/>
+            <Expander Header="Thư mục trọng số" Margin="0,13,0,0">
+              <DockPanel Margin="0,8,0,0"><Button Content="Chọn…" Command="{Binding BrowseCommand}" DockPanel.Dock="Right" Style="{StaticResource CompactButton}" Margin="8,0,0,0"/><TextBox Text="{Binding ModelDirectory, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Thư mục trọng số"/></DockPanel>
+            </Expander>
+            <Expander Header="Token ID và tùy chọn nâng cao" Margin="0,17,0,0">
               <StackPanel Margin="0,10,0,0">
-                <TextBox Text="{Binding Advanced, UpdateSourceTrigger=PropertyChanged}" FontFamily="Cascadia Code, Consolas" AutomationProperties.Name="Tham số chạy nâng cao" />
-                <TextBlock Text="Các đối số được truyền trực tiếp vào Python, hỗ trợ dấu nháy cho giá trị có khoảng trắng." Style="{StaticResource Muted}" FontSize="12" Margin="0,7,0,0" />
+                <TextBlock Text="Định dạng văn bản" Style="{StaticResource FieldLabel}" Margin="0,0,0,4"/>
+                <ComboBox ItemsSource="{Binding PromptFormats}" SelectedItem="{Binding PromptFormat}" IsEnabled="{Binding IsTextInput}" AutomationProperties.Name="Định dạng chat hoặc raw"/>
+                <CheckBox Content="Dùng token ID thay cho văn bản" IsChecked="{Binding UseTokens}"/>
+                <TextBox Text="{Binding Tokens, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding UseTokens}" ToolTip="Ví dụ: 1,2,3" AutomationProperties.Name="Token ID, phân cách bằng dấu phẩy"/>
+                <CheckBox Content="Gửi lại suy nghĩ trong lịch sử" IsChecked="{Binding KeepThinking}" IsEnabled="{Binding IsChatInput}" Margin="0,12,0,0"/>
+                <TextBlock Text="Đối số Python bổ sung" Style="{StaticResource FieldLabel}"/>
+                <TextBox Text="{Binding Advanced, UpdateSourceTrigger=PropertyChanged}" FontFamily="Cascadia Code, Consolas" AutomationProperties.Name="Tham số chạy nâng cao"/>
+                <TextBlock Text="Chế độ raw/token giữ nguyên đường chạy chẩn đoán. Chat dùng lịch sử văn bản với các vai trò riêng." Style="{StaticResource Muted}" FontSize="12" Margin="0,7,0,0"/>
               </StackPanel>
             </Expander>
           </StackPanel>
-        </Border>
-        <Border Grid.Column="2" Style="{StaticResource Panel}" VerticalAlignment="Top">
-          <StackPanel>
-            <TextBlock Text="Cấu hình chạy" Style="{StaticResource SectionTitle}" />
-            <TextBlock Text="Backend" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
-            <ComboBox ItemsSource="{Binding Backends}" SelectedItem="{Binding Backend}" />
-            <Grid>
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="14" />
-                <ColumnDefinition Width="*" />
-              </Grid.ColumnDefinitions>
-              <StackPanel>
-                <TextBlock Text="Context" Style="{StaticResource FieldLabel}" />
-                <TextBox Text="{Binding Context}" AutomationProperties.Name="Context tokens" />
-              </StackPanel>
-              <StackPanel Grid.Column="2">
-                <TextBlock Text="Token sinh thêm" Style="{StaticResource FieldLabel}" />
-                <TextBox Text="{Binding Generate}" AutomationProperties.Name="Số token sinh thêm" />
-              </StackPanel>
-            </Grid>
-            <TextBlock Text="Timeout (giây)" Style="{StaticResource FieldLabel}" />
-            <TextBox Text="{Binding Timeout}" />
-            <TextBlock Text="Giới hạn cho cả lượt chạy: khởi tạo, xử lý prompt và sinh token. Nhật ký bên dưới hiển thị giai đoạn đang thực hiện." Style="{StaticResource Muted}" FontSize="12" Margin="0,7,0,0" />
-            <Button Content="1. Lập kế hoạch bộ nhớ" Command="{Binding PlanCommand}" Margin="0,26,0,10" />
-            <Button Content="2. Chạy model" Command="{Binding GenerateCommand}" Style="{StaticResource Primary}" />
-            <TextBlock Text="Kết quả và nhật ký xuất hiện ở thanh tác vụ bên dưới. Có thể dừng tác vụ đang chạy bất cứ lúc nào." Style="{StaticResource Muted}" FontSize="12" Margin="0,18,0,0" />
-          </StackPanel>
-        </Border>
-      </Grid>
-    </StackPanel>
-  </ScrollViewer>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+  </Grid>
 </UserControl>

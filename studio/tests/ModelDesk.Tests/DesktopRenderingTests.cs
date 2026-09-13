@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Controls;
@@ -61,6 +62,13 @@ public sealed class DesktopRenderingTests(ITestOutputHelper output)
                 Assert.Equal("nvfp4", shell.SelectedProfile?.Key);
                 Assert.False(string.IsNullOrWhiteSpace(shell.PythonPath));
                 Assert.Empty(shell.Error);
+
+                // Populate a conversation as display data only; no Python adapter is invoked.
+                var conversation = new ConversationTurnViewModel("Xin chào, hãy giúp tôi kiểm tra model cục bộ.");
+                typeof(ConversationTurnViewModel).GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(conversation, [new GenerationResult("Xin chào! Câu trả lời được hiển thị ngay trong hội thoại. 😀",
+                        "Đây là suy nghĩ giả lập chỉ dành cho kiểm tra giao diện.", "eos_token", true, 24, "GENERATED_UNVERIFIED"), true]);
+                shell.Run.Turns.Add(conversation);
 
                 // Only fake service calls populate reviewable rows; no HTTP/process adapter exists here.
                 shell.Hub.SearchCommand.Execute(null);
@@ -129,6 +137,30 @@ public sealed class DesktopRenderingTests(ITestOutputHelper output)
                                 var position = files.TransformToAncestor(surface).Transform(new Point());
                                 Assert.True(files.ActualHeight >= 100 && position.Y + files.ActualHeight <= size.Height - 50,
                                     $"{theme}/{size}: model files are below the initial viewport ({position.Y}, {files.ActualHeight}).");
+                            }
+                            if (index == 1)
+                            {
+                                var composer = Assert.Single(Visuals<TextBox>(page), box => System.Windows.Automation.AutomationProperties.GetName(box) == "Nội dung prompt");
+                                Assert.True(composer.AcceptsReturn);
+                                var sendGesture = Assert.IsType<System.Windows.Input.KeyBinding>(Assert.Single(composer.InputBindings.Cast<System.Windows.Input.InputBinding>()));
+                                Assert.Equal(System.Windows.Input.Key.Enter, sendGesture.Key);
+                                Assert.Equal(System.Windows.Input.ModifierKeys.Control, sendGesture.Modifiers);
+                                Assert.Same(shell.Run.GenerateCommand, sendGesture.Command);
+                                Assert.Contains("lịch sử", Assert.Single(Visuals<TextBox>(page), box => System.Windows.Automation.AutomationProperties.GetName(box) == "Context tokens").ToolTip.ToString());
+                                Assert.Contains("suy nghĩ", Assert.Single(Visuals<TextBox>(page), box => System.Windows.Automation.AutomationProperties.GetName(box) == "Số token sinh thêm").ToolTip.ToString());
+                                var answer = Assert.Single(Visuals<TextBox>(page), box => System.Windows.Automation.AutomationProperties.GetName(box) == "Câu trả lời của model");
+                                Assert.Contains("hiển thị ngay", answer.Text);
+                                var transcript = Assert.Single(Visuals<ScrollViewer>(page), ConversationScroll.GetFollowLatest);
+                                var answerAt = answer.TransformToAncestor(surface).Transform(new Point());
+                                var transcriptAt = transcript.TransformToAncestor(surface).Transform(new Point());
+                                Assert.True(answerAt.Y >= transcriptAt.Y && answerAt.Y + Math.Min(answer.ActualHeight, 39) <= transcriptAt.Y + transcript.ActualHeight,
+                                    $"{theme}/{size}: the latest assistant text must be visible above the composer.");
+                                var reasoning = Assert.Single(Visuals<Expander>(page), item => Equals(item.Header, "Suy nghĩ của model"));
+                                Assert.False(reasoning.IsExpanded);
+                                var send = Assert.Single(Visuals<Button>(page), button => System.Windows.Automation.AutomationProperties.GetName(button) == "Gửi tin nhắn hoặc chạy đầu vào");
+                                var position = send.TransformToAncestor(surface).Transform(new Point());
+                                Assert.True(position.Y + send.ActualHeight <= size.Height - 45,
+                                    $"{theme}/{size}: conversation composer is below the initial viewport.");
                             }
 
                             var bitmap = new RenderTargetBitmap((int)size.Width, (int)size.Height, 96, 96, PixelFormats.Pbgra32);

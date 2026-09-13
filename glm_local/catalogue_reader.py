@@ -11,8 +11,12 @@ import stat
 import struct
 from types import MappingProxyType
 
-from .safetensor_reader import (MAX_HEADER_BYTES, MAX_READ_BYTES, SafeTensorError,
+from .safetensor_reader import (MAX_HEADER_BYTES, MAX_READ_BYTES, MAX_READ_SPAN_BYTES, SafeTensorError,
                                 SafeTensorReader, parse_header_bytes)
+
+_SPAN_COUNTERS = ("identity_checks", "protected_immutable_checks", "span_read_calls", "span_read_bytes",
+                  "span_inner_read_calls", "max_span_bytes", "protected_handle_upgrades")
+_MAX_COUNTERS = ("max_actual_read_bytes", "max_span_bytes")
 
 
 class _BoundHeaderReader(SafeTensorReader):
@@ -35,6 +39,7 @@ class _BoundHeaderReader(SafeTensorReader):
             digest.update(raw)
         if digest.hexdigest() != self._proof.header_sha256:
             raise SafeTensorError("Selected shard header SHA-256 differs from captured metadata")
+        self._header_sha256 = digest.hexdigest()
         self._header_bytes, self._payload_start = length, length + 8
         self._tensors, self._metadata = parse_header_bytes(header, self._file_size)
 
@@ -87,11 +92,21 @@ class SelectedCatalogueReader:
         for key in self._totals:
             self._totals[key] = (max(self._totals[key], counts[key]) if key == "max_actual_read_bytes"
                                  else self._totals[key] + counts[key])
+        if not hasattr(self, "_span_totals"):
+            self._span_totals = dict.fromkeys(_SPAN_COUNTERS, 0)
+        for key in _SPAN_COUNTERS:
+            value = counts.get(key, 0)
+            self._span_totals[key] = max(self._span_totals[key], value) if key in _MAX_COUNTERS else self._span_totals[key] + value
         reader.close()
 
     def _reader(self, name):
         if self._closed:
             raise SafeTensorError("Selected catalogue reader is closed")
+        reader = self._open.get(name)
+        if reader is not None and reader.protected_immutable:
+            reader._assert_unchanged()
+            self._open.move_to_end(name)
+            return reader
         identity = self._identity(name)
         if name in self._identities and self._identities[name] != identity:
             raise SafeTensorError("Selected shard changed since validation")
@@ -128,16 +143,25 @@ class SelectedCatalogueReader:
         item = self._selected[name]
         return self._reader(item.shard).read_matrix_tile(name, row, col, rows, cols)
 
+    def read_span(self, name, offset, count):
+        """Bind one logical span to its shard, with one catalogue validation pass."""
+        item = self._selected[name]
+        return self._reader(item.shard).read_span(name, offset, count)
+
     def stats(self):
         counts = dict(self._totals)
+        counts.update(getattr(self, "_span_totals", dict.fromkeys(_SPAN_COUNTERS, 0)))
         for reader in self._open.values():
             current = reader.stats()
             for key in counts:
-                counts[key] = max(counts[key], current[key]) if key == "max_actual_read_bytes" else counts[key] + current[key]
+                value = current.get(key, 0)
+                counts[key] = max(counts[key], value) if key in _MAX_COUNTERS else counts[key] + value
         return {**counts, "open_shards": len(self._open), "peak_open_shards": self._peak_open,
                 "shard_opens": self._opens, "lru_evictions": self._evictions,
                 "selected_shards": len(self._proofs), "selected_tensors": len(self._selected),
                 "policy_max_open_shards": self._max_open, "policy_max_read_bytes": MAX_READ_BYTES,
+                "policy_max_span_bytes": MAX_READ_SPAN_BYTES,
+                "identity_check_scope": "underlying tensor-reader checks, excluding catalogue/config/index checks",
                 "selected_header_digest_verified": True, "whole_payload_checksum_verified": False,
                 "legacy_reader_limits_changed": False}
 

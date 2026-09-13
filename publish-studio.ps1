@@ -40,7 +40,7 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $studioProjectRoot 'studio\README.md') -Destination (Join-Path $studioOutput 'README.md') -Force
     $receipt = [ordered]@{
-        application = 'ModelDesk'; version = '1.0.3'; framework = '.NET 10'; runtime = 'win-x64'
+        application = 'ModelDesk'; version = '1.1.0'; framework = '.NET 10'; runtime = 'win-x64'
         selfContained = (-not $FrameworkDependent); publishedUtc = [DateTime]::UtcNow.ToString('o')
         pythonBundled = $false; pythonCoreCopiedWithoutChanges = $true; modelWeightsIncluded = $false
     }

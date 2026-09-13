@@ -13,7 +13,15 @@ Trình tải hỗ trợ chia đoạn cho file lớn, tối đa bốn kết nối
 
 ## Python core — đọc trọng số FP8/NVFP4 theo khối
 
-**Trạng thái 0.10.1: core tối ưu CPU và chẩn đoán timeout, đi kèm ModelDesk 1.0.3.** Phép nhân BF16/F16/F32 theo tile chạy bằng native CPU; NVFP4 CPU gom các tile trong một row band để giảm số lần gọi Python, giữ thứ tự tính FP32. Planner hạch toán bộ đệm đọc tối đa 8 MiB và scratch NVFP4 5 MiB. Lượt chạy có nhật ký tiến độ và lưu giai đoạn cuối khi timeout. Cần chạy `build-native.bat` khi cập nhật source để có các entrypoint native mới.
+**Trạng thái 0.11.0: hội thoại có lịch sử và streaming, đi kèm ModelDesk 1.1.0.** Trang Chạy model dùng chat template đã kiểm chứng của checkpoint, giữ lịch sử các lượt trả lời hoàn tất và hiển thị riêng phần suy luận. CLI có lệnh `chat`. Native CPU chia hàng cho tối đa tám luồng, dùng SIMD với lô đầu vào và đọc mỗi dải trọng số một lần cho tối đa 16 token prefill. Cache K/V mở rộng được giới hạn, hạch toán trong planner và giải phóng khi reset. Cần chạy `build-native.bat` rồi build lại GUI/CLI để sử dụng các entrypoint mới.
+
+```powershell
+.\modeldesk-cli.bat chat --profile nvfp4 --prompt "Xin chào" --context 4096 --max-tokens 256
+```
+
+[Cách hội thoại và giới hạn chạy](docs/CONVERSATION.md) giải thích lịch sử, token suy luận, timeout và kết quả chưa hoàn tất. Tốc độ kernel riêng không đại diện cho tốc độ cả model hàng trăm GB trên máy RAM 32 GB.
+
+[Bằng chứng hiệu năng và hội thoại 0.11.0](docs/verification/conversation-performance-v0.11.0.md).
 
 Profile NVFP4 vẫn là mặc định; profile FP8 cũ được giữ riêng. Kiểm chứng full-checkpoint và tốc độ thực tế là các bước riêng với kiểm thử kernel/metadata.
 

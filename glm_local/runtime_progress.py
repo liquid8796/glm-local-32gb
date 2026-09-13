@@ -22,6 +22,14 @@ _TEXT = {"phase": 32, "tensor_name": 512, "backend": 32}
 _COUNTS = {"position", "token_index", "token_count", "prompt_tokens", "generated_tokens",
            "requested_new_tokens", "layer_index", "layer_count", "rows", "cols"}
 _TERMINAL = {"ERROR", "INTERRUPTED", "PASS", "ESTIMATE_FITS", "GENERATED_UNVERIFIED", "NUMERICAL_MISMATCH"}
+_TERMINAL.add("INCOMPLETE_RESPONSE")
+_OUTPUT_LOCK = threading.Lock()
+
+
+def write_runtime_line(text):
+    """Keep diagnostic and generated-response JSON lines from interleaving."""
+    with _OUTPUT_LOCK:
+        print(text, flush=True)
 
 
 def _text(value, maximum):
@@ -127,7 +135,7 @@ class RuntimeProgress:
                 text += f" tensor={record['tensor_name']}"
             text += f" stage_elapsed={record['stage_elapsed_seconds']:.1f}s"
             try:
-                print(text, flush=True)
+                write_runtime_line(text)
             except (OSError, UnicodeError, ValueError):
                 self._stdout_broken = True
             self._last_stdout = now

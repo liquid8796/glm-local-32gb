@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <float.h>
+#include <xmmintrin.h>
+#include "cpu_row_pool.h"
 
 #if defined(_WIN32)
 #define FP8_EXPORT __declspec(dllexport)
@@ -152,4 +155,187 @@ FP8_EXPORT int fp8_cpu_matvec_dense_tile(
         output[row] = sum;
     }
     return FP8_OK;
+}
+
+FP8_EXPORT void *fp8_cpu_row_pool_create(int threads) { return cpu_rows_pool_create(threads); }
+FP8_EXPORT void fp8_cpu_row_pool_destroy(void *pool) { cpu_rows_pool_destroy((cpu_rows_pool *)pool); }
+
+typedef struct dense_row_job {
+    const uint8_t *weights;
+    const float *vector;
+    float *output;
+    int cols;
+    int dtype;
+    size_t itemsize;
+} dense_row_job;
+
+/* For small input batches, independent rows fill SIMD lanes instead. The
+ * final0..3rows remain on the original scalar path; no reduction is reordered. */
+static int dense_four_rows(const uint8_t *weights, const float *vectors, float *output,
+                          int cols, int batch, int dtype, size_t itemsize, int start, int stop)
+{
+    const __m128 sign = _mm_set1_ps(-0.0f), limit = _mm_set1_ps(FLT_MAX);
+    int row, tile, col, lane, offset;
+    for (row = start; row + 4 <= stop; row += 4) {
+        __m128 total[3];
+        for (lane = 0; lane < batch; ++lane) { total[lane] = _mm_setzero_ps(); }
+        for (tile = 0; tile < cols; tile += 128) {
+            int end = tile + 128 < cols ? tile + 128 : cols;
+            __m128 partial[3];
+            for (lane = 0; lane < batch; ++lane) { partial[lane] = _mm_setzero_ps(); }
+            for (col = tile; col < end; ++col) {
+                float w0 = fp8_cpu_decode_dense(weights + ((size_t)row * (size_t)cols + (size_t)col) * itemsize, dtype);
+                float w1 = fp8_cpu_decode_dense(weights + ((size_t)(row + 1) * (size_t)cols + (size_t)col) * itemsize, dtype);
+                float w2 = fp8_cpu_decode_dense(weights + ((size_t)(row + 2) * (size_t)cols + (size_t)col) * itemsize, dtype);
+                float w3 = fp8_cpu_decode_dense(weights + ((size_t)(row + 3) * (size_t)cols + (size_t)col) * itemsize, dtype);
+                __m128 weight = _mm_set_ps(w3, w2, w1, w0);
+                if (_mm_movemask_ps(_mm_cmple_ps(_mm_andnot_ps(sign, weight), limit)) != 15) { return FP8_NONFINITE; }
+                for (lane = 0; lane < batch; ++lane) {
+                    __m128 product = _mm_mul_ps(weight, _mm_set1_ps(vectors[(size_t)col * (size_t)batch + (size_t)lane]));
+                    partial[lane] = _mm_add_ps(partial[lane], product);
+                    if (_mm_movemask_ps(_mm_cmple_ps(_mm_andnot_ps(sign, partial[lane]), limit)) != 15) { return FP8_NONFINITE; }
+                }
+            }
+            for (lane = 0; lane < batch; ++lane) {
+                total[lane] = _mm_add_ps(total[lane], partial[lane]);
+                if (_mm_movemask_ps(_mm_cmple_ps(_mm_andnot_ps(sign, total[lane]), limit)) != 15) { return FP8_NONFINITE; }
+            }
+        }
+        for (lane = 0; lane < batch; ++lane) {
+            float values[4];
+            _mm_storeu_ps(values, total[lane]);
+            for (offset = 0; offset < 4; ++offset) { output[(size_t)(row + offset) * (size_t)batch + (size_t)lane] = values[offset]; }
+        }
+    }
+    return FP8_OK;
+}
+
+static int dense_rows(void *argument, int start, int stop)
+{
+    dense_row_job *job = (dense_row_job *)argument;
+    int row, tile, col;
+    int status = dense_four_rows(job->weights, job->vector, job->output, job->cols, 1,
+                                job->dtype, job->itemsize, start, stop);
+    if (status != FP8_OK) { return status; }
+    start += ((stop - start) / 4) * 4;
+    for (row = start; row < stop; ++row) {
+        float total = 0.0f;
+        for (tile = 0; tile < job->cols; tile += 128) {
+            int end = tile + 128 < job->cols ? tile + 128 : job->cols;
+            float partial = 0.0f;
+            for (col = tile; col < end; ++col) {
+                float weight = fp8_cpu_decode_dense(job->weights + ((size_t)row * (size_t)job->cols + (size_t)col) * job->itemsize, job->dtype);
+                float product = weight * job->vector[col];
+                partial = partial + product;
+                if (!isfinite(weight) || !isfinite(product) || !isfinite(partial)) { return FP8_NONFINITE; }
+            }
+            total = total + partial;
+            if (!isfinite(total)) { return FP8_NONFINITE; }
+        }
+        job->output[row] = total;
+    }
+    return FP8_OK;
+}
+
+FP8_EXPORT int fp8_cpu_matvec_dense_row_band(
+    const uint8_t *weights, size_t weight_bytes, int rows, int cols, int dtype,
+    const float *vector, size_t vector_count, float *output, size_t output_count, void *row_pool)
+{
+    dense_row_job job;
+    int col;
+    size_t itemsize;
+    if (weights == NULL || vector == NULL || output == NULL || rows < 1 || rows > 128 ||
+        cols < 1 || cols > 16384 || dtype < 1 || dtype > 3) { return FP8_INVALID_ARGUMENT; }
+    itemsize = dtype == 3 ? 4u : 2u;
+    if (weight_bytes != (size_t)rows * (size_t)cols * itemsize || vector_count != (size_t)cols || output_count != (size_t)rows) {
+        return FP8_INVALID_ARGUMENT;
+    }
+    for (col = 0; col < cols; ++col) { if (!isfinite(vector[col])) { return FP8_NONFINITE; } }
+    job.weights = weights;
+    job.vector = vector;
+    job.output = output;
+    job.cols = cols;
+    job.dtype = dtype;
+    job.itemsize = itemsize;
+    return cpu_rows_run((cpu_rows_pool *)row_pool, dense_rows, &job, rows, rows * cols >= 65536);
+}
+
+/* Independent vectors occupy SIMD lanes; no horizontal reduction or FMA.
+ * Every lane still sums columns sequentially in128-column tiles. */
+typedef struct dense_many_job {
+    const uint8_t *weights;
+    const float *vectors;
+    float *output;
+    int cols, batch, dtype;
+    size_t itemsize;
+} dense_many_job;
+
+static int dense_many_rows(void *argument, int start, int stop)
+{
+    dense_many_job *job = (dense_many_job *)argument;
+    int row, tile, col, lane, group;
+    int groups = job->batch / 4, first_tail = groups * 4;
+    const __m128 sign = _mm_set1_ps(-0.0f), limit = _mm_set1_ps(FLT_MAX);
+    if (job->batch <= 3) {
+        int status = dense_four_rows(job->weights, job->vectors, job->output, job->cols, job->batch,
+                                    job->dtype, job->itemsize, start, stop);
+        if (status != FP8_OK) { return status; }
+        start += ((stop - start) / 4) * 4;
+    }
+    for (row = start; row < stop; ++row) {
+        __m128 totals[4];
+        float tail_total[3] = {0.0f, 0.0f, 0.0f};
+        for (group = 0; group < groups; ++group) { totals[group] = _mm_setzero_ps(); }
+        for (tile = 0; tile < job->cols; tile += 128) {
+            int end = tile + 128 < job->cols ? tile + 128 : job->cols;
+            __m128 partials[4];
+            float tail_partial[3] = {0.0f, 0.0f, 0.0f};
+            for (group = 0; group < groups; ++group) { partials[group] = _mm_setzero_ps(); }
+            for (col = tile; col < end; ++col) {
+                float weight = fp8_cpu_decode_dense(job->weights + ((size_t)row * (size_t)job->cols + (size_t)col) * job->itemsize, job->dtype);
+                const float *input = job->vectors + (size_t)col * (size_t)job->batch;
+                __m128 broadcast;
+                if (!isfinite(weight)) { return FP8_NONFINITE; }
+                broadcast = _mm_set1_ps(weight);
+                for (group = 0; group < groups; ++group) {
+                    __m128 product = _mm_mul_ps(broadcast, _mm_loadu_ps(input + 4 * group));
+                    partials[group] = _mm_add_ps(partials[group], product);
+                    if (_mm_movemask_ps(_mm_cmple_ps(_mm_andnot_ps(sign, partials[group]), limit)) != 15) { return FP8_NONFINITE; }
+                }
+                for (lane = first_tail; lane < job->batch; ++lane) {
+                    float product = weight * input[lane];
+                    tail_partial[lane - first_tail] = tail_partial[lane - first_tail] + product;
+                    if (!isfinite(tail_partial[lane - first_tail])) { return FP8_NONFINITE; }
+                }
+            }
+            for (group = 0; group < groups; ++group) {
+                totals[group] = _mm_add_ps(totals[group], partials[group]);
+                if (_mm_movemask_ps(_mm_cmple_ps(_mm_andnot_ps(sign, totals[group]), limit)) != 15) { return FP8_NONFINITE; }
+            }
+            for (lane = first_tail; lane < job->batch; ++lane) {
+                tail_total[lane - first_tail] = tail_total[lane - first_tail] + tail_partial[lane - first_tail];
+                if (!isfinite(tail_total[lane - first_tail])) { return FP8_NONFINITE; }
+            }
+        }
+        for (group = 0; group < groups; ++group) { _mm_storeu_ps(job->output + (size_t)row * (size_t)job->batch + 4 * group, totals[group]); }
+        for (lane = first_tail; lane < job->batch; ++lane) { job->output[(size_t)row * (size_t)job->batch + (size_t)lane] = tail_total[lane - first_tail]; }
+    }
+    return FP8_OK;
+}
+
+FP8_EXPORT int fp8_cpu_matvec_dense_row_band_many(
+    const uint8_t *weights, size_t weight_bytes, int rows, int cols, int batch, int dtype,
+    const float *vectors, size_t vector_count, float *output, size_t output_count, void *row_pool)
+{
+    dense_many_job job;
+    size_t index, itemsize;
+    if (weights == NULL || vectors == NULL || output == NULL || rows < 1 || rows > 128 ||
+        cols < 1 || cols > 16384 || batch < 1 || batch > 16 || dtype < 1 || dtype > 3) { return FP8_INVALID_ARGUMENT; }
+    itemsize = dtype == 3 ? 4u : 2u;
+    if (weight_bytes != (size_t)rows * (size_t)cols * itemsize || vector_count != (size_t)cols * (size_t)batch ||
+        output_count != (size_t)rows * (size_t)batch) { return FP8_INVALID_ARGUMENT; }
+    for (index = 0; index < vector_count; ++index) { if (!isfinite(vectors[index])) { return FP8_NONFINITE; } }
+    job.weights = weights; job.vectors = vectors; job.output = output;
+    job.cols = cols; job.batch = batch; job.dtype = dtype; job.itemsize = itemsize;
+    return cpu_rows_run((cpu_rows_pool *)row_pool, dense_many_rows, &job, rows, rows * cols * batch >= 65536);
 }

@@ -1,6 +1,12 @@
 # Current Memory Snapshot — GLM Local 32GB
 
-Current release: v0.10.1. Historical verification artifacts retain their original release and dependency versions.
+Current release: v0.11.0. Historical verification artifacts retain their original release and dependency versions.
+
+ModelDesk1.1.0 adds structured text conversation, pinned chat-template verification, incremental Unicode-safe assistant/reasoning output, complete-pair history, retries and CLI chat. Incomplete output stays visible and is excluded from subsequent context. Python remains the inference owner; the C# adapter writes per-run messages and validates report ownership. Each turn starts a worker and replays its bounded history; there is no persistent inference server or HTTP provider endpoint.
+
+Core0.11.0 adds eight-thread native CPU row bands, SIMD across up to16 independent vectors, layer-wise bounded prefill, protected Windows read handles and expanded MLA output reuse (up to256 tokens/layer). Planner and runtime leases include the caches and scratch space. CPU is the default generation/planning backend; hybrid dense operations also use CPU row bands. New paths preserve the established FP32 arithmetic and require rebuilt native DLLs. Full-checkpoint output fidelity remains a separate acceptance boundary.
+
+Final release validation:899 distinct Python tests passed (898 main suite plus the one separately enabled row-SIMD benchmark),225 C# tests passed with0buildwarnings/errors, and28 headless WPF frames. A self-contained1.1.0 package was published under artifacts/ModelDesk/win-x64. See verification/conversation-performance-v0.11.0.md for scoped measurements and acceptance limits.
 
 Active default profile is nvfp4: dealignai/GLM-5.3-ABLITERATED-NVFP4 pinned371bdb985d0124e76348c91e4a8fcf3a9d719d09. User set the former FP8 model aside; it remains selectable with --profile fp8. The user completed the NVFP4 download; on2026-09-13 all282 shard names/sizes matched the pinned manifest and the tokenizer passed at the selected E: directory. Full payload hashes were not reread in that inventory.
 

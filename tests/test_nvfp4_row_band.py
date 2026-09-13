@@ -35,7 +35,7 @@ class RowBandBoundaryTests(unittest.TestCase):
 
     def test_invalid_band_metadata_or_payload_never_calls_c(self):
         good = [b"\x22" * 8, 1, 16, b"\x38", [1] * 16, 1]
-        invalid = [(0, b""), (0, bytearray(8)), (1, 0), (1, 129), (1, True), (2, 15), (2, 16385),
+        invalid = [(0, b""), (0, bytearray(7)), (1, 0), (1, 129), (1, True), (2, 15), (2, 16385),
                    (2, False), (3, b""), (3, b"\x7f"), (3, b"\xff"), (3, b"\x80"),
                    (4, [1] * 15), (4, [math.nan] * 16), (4, [True] * 16), (4, "1" * 16),
                    (4, None), (5, 0), (5, -1), (5, math.inf), (5, 1e40)]

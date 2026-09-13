@@ -1,5 +1,7 @@
 # ModelDesk
 
+**Bản 1.1.0 / core 0.11.0** bổ sung chế độ hội thoại có lịch sử, câu trả lời trực tiếp, phần suy luận thu gọn và lệnh CLI `chat`. Mặc định dùng CPU, context 4096, 256 token mới và reasoning low. Lượt chưa hoàn tất vẫn hiển thị để thử lại nhưng không được đưa vào lịch sử tiếp theo. Native CPU xử lý song song theo hàng, SIMD theo lô đầu vào và tái sử dụng K/V có giới hạn. Xem [hướng dẫn hội thoại](../docs/CONVERSATION.md) và build lại native cùng GUI/CLI sau khi cập nhật.
+
 **Bản 1.0.3 / core 0.10.1** sửa đường tính dense BF16/F16/F32 chậm bằng kernel native CPU, thêm bộ đệm đọc trọng số tối đa 8 MiB và tiến độ khởi tạo/token/layer/projection trong nhật ký. Timeout vẫn giới hạn toàn bộ lượt chạy; báo cáo giữ giai đoạn cuối và GUI phân biệt **Hết thời gian chờ** với lỗi thực thi khác. Chạy `build-native.bat` sau khi cập nhật source, rồi build lại GUI/CLI. Các phép tính và giới hạn RAM 32 GB được giữ; planner cộng thêm dung lượng bộ đệm đọc. Tốc độ kernel riêng không phải tốc độ toàn model.
 
 **Bản 1.0.2**: chọn kết quả tìm kiếm sẽ tự mở model ở bên phải. Trang Hub quét thư mục khi mở model, đổi thư mục, trở lại tab hoặc một lượt tải của model hoàn tất. File đích có đủ dung lượng được đánh dấu **Đã tải** và ẩn checkbox; file `.part` vẫn là tải dở. Bộ lọc hỗ trợ **Tất cả / Đã tải / Chưa tải**. Giữ Shift rồi bấm checkbox hoặc hàng cuối để chọn một dải theo thứ tự đang lọc/sắp xếp; các file đã tải hoặc không truy cập được bị bỏ qua.
@@ -59,7 +61,7 @@ Hai profile đi kèm là `nvfp4` và `fp8`. Profile quyết định model ID, re
 | Trang | Công việc |
 |---|---|
 | Tổng quan | Xem checkpoint/revision đang chọn, đường dẫn Python, giới hạn cấu hình và báo cáo sẵn sàng gần nhất; chạy doctor hoặc quan sát GPU. |
-| Chạy model | Nhập thư mục trọng số, prompt hoặc token ID, backend, context, số token sinh và timeout; lập kế hoạch bộ nhớ trước khi sinh văn bản. |
+| Chạy model | Hội thoại có lịch sử và câu trả lời trực tiếp, suy luận thu gọn, sao chép/thử lại/tạo cuộc trò chuyện mới; vẫn có chế độ văn bản thô và token ID. Cấu hình backend, context, token sinh và timeout; lập kế hoạch bộ nhớ trước khi chạy. |
 | Kiểm chứng | Chạy toàn bộ operation của core: metadata, kiến trúc, projection, tokenizer, kernel, mini, parity, storage, Windows policy, build native, setup và bộ kiểm thử tham chiếu. |
 | Hugging Face | Tìm model, mở trực tiếp `owner/model`, chọn revision, đọc README dạng văn bản, lọc/chọn tệp và chọn thư mục tải. |
 | Tải xuống | Theo dõi số byte, tốc độ, thời gian còn lại và kết quả; tạm dừng, tiếp tục hoặc hủy từng tệp hay cả hàng đợi. |
@@ -101,6 +103,7 @@ Các ví dụ sau chạy trong thư mục bộ phát hành. Trong repository, th
 .\modeldesk-cli.exe --json hub details dealignai/GLM-5.3-ABLITERATED-NVFP4
 .\modeldesk-cli.exe profiles
 .\modeldesk-cli.exe settings show
+.\modeldesk-cli.exe chat --profile nvfp4 --prompt "Xin chào" --max-tokens 256
 ```
 
 Tải riêng các tệp cấu hình nhỏ vào thư mục bạn chọn:

@@ -2,7 +2,7 @@
 
 Opening checks complete metadata and every local shard header. Weight payloads
 are read on demand in <=64-KiB reads, with bounded encoded row-band reuse and
-native batching of <=128-square arithmetic tiles. No complete weight matrix
+native row scheduling and bounded input batches of <=128-square arithmetic tiles. No complete weight matrix
 or expert bank is retained. Local header evidence does not authenticate
 the contents of all payloads or establish full-model numerical/resource limits.
 """
@@ -12,6 +12,7 @@ from contextlib import nullcontext
 from copy import deepcopy
 import hashlib
 import math
+import os
 from pathlib import Path
 import stat
 import struct
@@ -24,7 +25,7 @@ from .checkpoint_schema import validate_index, validate_manifest, quantization_f
 from .checkpoint_snapshot import OfflineMetadataSource
 from .cpu_probe import NativeCpuBackend, _finite_float32
 from .execution import ProjectionDescriptor, ShardDescriptor, TensorDescriptor, execute_projection
-from .safetensor_reader import MAX_READ_BYTES, SafeTensorError, parse_header_bytes
+from .safetensor_reader import MAX_READ_BYTES, SafeTensorError, parse_header_bytes, _open_protected_read
 from .model_profiles import reports_directory
 
 MAX_VECTOR_ELEMENTS = 1_048_576
@@ -56,6 +57,35 @@ def _check_local_document(path, expected):
     if _identity(path) != before or digest.digest() != hashlib.sha256(expected).digest():
         raise SafeTensorError("Local config/index differs from captured evidence")
     return before
+
+
+def _seal_local_document(path, expected, identity):
+    """Retain a Windows metadata lock, rechecking the original bytes/identity."""
+    if os.name != "nt":
+        return None
+    stream = None
+    try:
+        stream = _open_protected_read(path)
+        descriptor = os.fstat(stream.fileno())
+        if (_identity(path) != identity or
+                (descriptor.st_dev, descriptor.st_ino, descriptor.st_size, descriptor.st_mtime_ns) != identity[:4]):
+            raise SafeTensorError("Local config/index changed while acquiring protected access")
+        digest, remaining = hashlib.sha256(), len(expected)
+        while remaining:
+            raw = stream.read(min(MAX_READ_BYTES, remaining))
+            if not raw:
+                raise SafeTensorError("Local config/index truncated while acquiring protected access")
+            digest.update(raw)
+            remaining -= len(raw)
+        if _identity(path) != identity or digest.digest() != hashlib.sha256(expected).digest():
+            raise SafeTensorError("Local config/index differs while acquiring protected access")
+        return stream
+    except BaseException as error:
+        if stream is not None:
+            stream.close()
+        if isinstance(error, OSError):
+            raise SafeTensorError("Cannot acquire protected config/index access; file changed or is open for writing") from error
+        raise
 
 
 class FullCatalogueReader(SelectedCatalogueReader):
@@ -123,9 +153,8 @@ class FullCatalogueReader(SelectedCatalogueReader):
         directory_info = self.directory.lstat()
         if not stat.S_ISDIR(directory_info.st_mode) or getattr(directory_info, "st_file_attributes", 0) & 0x400:
             raise SafeTensorError("Runtime checkpoint directory must be a regular directory")
-        self._documents = {self.directory / "config.json": _check_local_document(self.directory / "config.json", config_raw),
-                           self.directory / "model.safetensors.index.json": _check_local_document(
-                               self.directory / "model.safetensors.index.json", index_raw)}
+        self._documents, self._document_handles = {}, {}
+        self._metadata_identity_checks = self._metadata_protected_checks = 0
         self._tensors = MappingProxyType({name: item.info() for name, item in self._selected.items()})
         self._open = OrderedDict()
         self._max_open, self._closed, self._identities = max_open_shards, False, {}
@@ -133,6 +162,13 @@ class FullCatalogueReader(SelectedCatalogueReader):
                             tensor_read_calls=0, max_actual_read_bytes=0)
         self._opens = self._evictions = self._peak_open = 0
         try:
+            for name, raw in (("config.json", config_raw), ("model.safetensors.index.json", index_raw)):
+                path = self.directory / name
+                identity = _check_local_document(path, raw)
+                self._documents[path] = identity
+                handle = _seal_local_document(path, raw, identity)
+                if handle is not None:
+                    self._document_handles[path] = handle
             for name in self._proofs:
                 self._reader(name)
         except BaseException:
@@ -142,8 +178,22 @@ class FullCatalogueReader(SelectedCatalogueReader):
     def _reader(self, name):
         if self._closed:
             raise SafeTensorError("Runtime catalogue reader is closed")
-        if any(_identity(path) != identity for path, identity in self._documents.items()):
-            raise SafeTensorError("Local checkpoint config/index changed since validation")
+        for path, identity in self._documents.items():
+            handle = self._document_handles.get(path)
+            if handle is not None:
+                if handle.closed:
+                    self.close()
+                    raise SafeTensorError("Protected checkpoint config/index handle is closed")
+                self._metadata_protected_checks += 1
+            else:
+                self._metadata_identity_checks += 1
+                if _identity(path) != identity:
+                    raise SafeTensorError("Local checkpoint config/index changed since validation")
+        reader = self._open.get(name)
+        if reader is not None and reader.protected_immutable:
+            reader._assert_unchanged()
+            self._open.move_to_end(name)
+            return reader
         identity = self._identity(name)
         if name in self._identities and self._identities[name] != identity:
             raise SafeTensorError("Runtime shard changed since validation")
@@ -186,8 +236,19 @@ class FullCatalogueReader(SelectedCatalogueReader):
     def assert_tensor_unchanged(self, name):
         self._reader(self._selected[name].shard)._assert_unchanged()
 
+    def close(self):
+        try:
+            super().close()
+        finally:
+            for handle in self._document_handles.values():
+                handle.close()
+            self._document_handles.clear()
+
     def stats(self):
         return {**super().stats(), "complete_catalogue_bound": True, "local_config_index_verified": True,
+                "protected_metadata_handles": sum(not handle.closed for handle in self._document_handles.values()),
+                "metadata_identity_checks": self._metadata_identity_checks,
+                "metadata_protected_checks": self._metadata_protected_checks,
                 "local_all_shard_headers_verified": True, "full_model_loaded": False,
                 "real_checkpoint_compatible": False, "full_model_limits_verified": False,
                 "inference_verified": False, "payload_values_verified": False,
@@ -230,7 +291,9 @@ class RuntimeWeights:
         self._quant_format = quantization_format(self.config)
         self._counts = dict(linear_calls=0, vector_calls=0, embedding_calls=0, cpu_tiles=0, gpu_tiles=0,
                             max_decoded_dense_tile_bytes=0, scoped_cuda_contexts=0,
-                            maximum_context_launch_budget=0, native_dense_tiles=0, scalar_dense_tiles=0)
+                            maximum_context_launch_budget=0, native_dense_tiles=0, scalar_dense_tiles=0,
+                            native_dense_bands=0, native_nvfp4_bands=0, projection_batch_calls=0,
+                            projection_batch_vectors=0, encoded_band_reads=0)
         try:
             if self._cpu is None:
                 self._cpu = NativeCpuBackend()
@@ -245,6 +308,16 @@ class RuntimeWeights:
         if len(info.shape) != rank or any(n > MAX_VECTOR_ELEMENTS for n in info.shape):
             raise SafeTensorError("Runtime tensor rank/vector dimension exceeds the bounded operation policy")
         return info
+
+    def assert_weight_unchanged(self, name):
+        item = self._reader.tensors[name]
+        dependencies = [name]
+        if item.dtype == "F8_E4M3":
+            dependencies.append(name + "_scale_inv")
+        elif item.dtype == "U8" and nvfp4_quantized_weight(name, self.config):
+            dependencies.extend(nvfp4_ancillary_names(name))
+        for dependency in dependencies:
+            self._reader.assert_tensor_unchanged(dependency)
 
     def _reserve(self, count, label):
         return self._ledger.reserve(count, label=label) if self._ledger else nullcontext()
@@ -291,6 +364,9 @@ class RuntimeWeights:
             raise ValueError("Runtime projection exceeds the bounded tile operation budget")
         if self._plan is not None and (rows > self._plan.max_projection_rows or cols > self._plan.max_projection_columns):
             raise ValueError("Runtime projection exceeds residency plan dimensions")
+        kernel = self._band_kernel(info, nvfp4, cols)
+        if kernel is not None:
+            return self._project_many(name, info, [values], kernel, nvfp4)[0]
         if info.dtype == "F8_E4M3" or nvfp4:
             descriptor = self._reader.projection(name)
             execute, cpu_kernel = execute_projection, self._cpu
@@ -353,6 +429,49 @@ class RuntimeWeights:
                         self._counts["cpu_tiles"] += 1
         self._counts["linear_calls"] += 1
         return result
+
+    def _band_kernel(self, info, nvfp4, cols):
+        if cols > 16384 or (nvfp4 and self.backend != "cpu"):
+            return None
+        if nvfp4:
+            if self._nv_cpu is None:
+                from .nvfp4_kernels import NativeNVFP4CpuBackend
+                self._nv_cpu = NativeNVFP4CpuBackend(row_band_threads=getattr(self._cpu, "row_band_threads", 8))
+                self._owns_nv_cpu = True
+            return self._nv_cpu if (getattr(self._nv_cpu, "supports_nvfp4_row_band", False)
+                and callable(getattr(self._nv_cpu, "prepare_nvfp4_vector", None))) else None
+        return self._cpu if info.dtype in ("BF16", "F16", "F32") and (
+            getattr(self._cpu, "supports_dense_row_band", False)
+            and callable(getattr(self._cpu, "prepare_dense_vector", None))) else None
+
+    def _project_many(self, name, info, vectors, kernel, nvfp4):
+        from .runtime_linear import project_many
+        output, counts = project_many(self._reader, name, info, vectors, kernel, nvfp4=nvfp4, ledger=self._ledger)
+        self._counts["linear_calls"] += len(vectors)
+        self._counts["cpu_tiles"] += counts["logical_tiles"]
+        self._counts["native_nvfp4_bands" if nvfp4 else "native_dense_bands"] += counts["native_band_calls"]
+        if not nvfp4:
+            self._counts["native_dense_tiles"] += counts["logical_tiles"]
+        self._counts["projection_batch_calls"] += 1
+        self._counts["projection_batch_vectors"] += len(vectors)
+        self._counts["encoded_band_reads"] += counts["band_reads"]
+        return output
+
+    def linear_many(self, name, vectors):
+        from .runtime_linear import MAX_LINEAR_BATCH
+        if not isinstance(vectors, (list, tuple)) or not 1 <= len(vectors) <= MAX_LINEAR_BATCH:
+            raise ValueError("A projection batch must contain 1..16 input vectors")
+        info = self._info(name, 2)
+        nvfp4 = info.dtype == "U8"
+        if nvfp4 and (self._quant_format != "nvfp4" or not nvfp4_quantized_weight(name, self.config)):
+            raise SafeTensorError("U8 tensor has no supported NVFP4 logical projection")
+        rows, cols = info.shape[0], info.shape[1] * (2 if nvfp4 else 1)
+        if ((rows + BLOCK - 1) // BLOCK) * ((cols + BLOCK - 1) // BLOCK) > MAX_LINEAR_TILES:
+            raise ValueError("Runtime projection exceeds the bounded tile operation budget")
+        if self._plan is not None and (rows > self._plan.max_projection_rows or cols > self._plan.max_projection_columns):
+            raise ValueError("Runtime projection exceeds residency plan dimensions")
+        kernel = self._band_kernel(info, nvfp4, cols)
+        return self._project_many(name, info, vectors, kernel, nvfp4) if kernel is not None else [self.linear(name, vector) for vector in vectors]
 
     def stats(self):
         return {**self._reader.stats(), **self._counts, "experimental_runtime": True,

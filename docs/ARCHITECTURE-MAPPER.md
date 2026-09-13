@@ -1,4 +1,4 @@
-# GLM Architecture Mapper v0.11.0
+# GLM Architecture Mapper v0.11.1
 
 NVFP4 now has a separate reviewed ModelOpt0.45.0 profile for `dealignai/GLM-5.3-ABLITERATED-NVFP4` at `371bdb985d0124e76348c91e4a8fcf3a9d719d09`. Its complete inventory matches232,385 tensors:57,600 routed projections each have U8[N,K/2] weight, E4M3[N,K/16] block scale and two F32scalar ancillaries. Protected attention/shared/dense/MTP tensors remain BF16. Roles, logical/stored shapes, producer/config groups/ignore coverage and scalar shapes are independently checked; unsupported profiles still require review.
 

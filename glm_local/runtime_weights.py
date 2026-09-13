@@ -287,13 +287,16 @@ class RuntimeWeights:
         self.config, self._settings = deepcopy(self._reader.config), dict(settings)
         self.backend, self._gpu, self._gate, self._ledger, self._plan = backend, gpu, gate, ledger, plan
         self._cpu, self._owns_cpu, self._closed = cpu, cpu is None, False
+        self._read_ahead = None
         self._nv_cpu, self._owns_nv_cpu = (cpu if callable(getattr(cpu, "matvec_nvfp4_tile", None)) else None), False
         self._quant_format = quantization_format(self.config)
         self._counts = dict(linear_calls=0, vector_calls=0, embedding_calls=0, cpu_tiles=0, gpu_tiles=0,
                             max_decoded_dense_tile_bytes=0, scoped_cuda_contexts=0,
                             maximum_context_launch_budget=0, native_dense_tiles=0, scalar_dense_tiles=0,
                             native_dense_bands=0, native_nvfp4_bands=0, projection_batch_calls=0,
-                            projection_batch_vectors=0, encoded_band_reads=0)
+                            projection_batch_vectors=0, encoded_band_reads=0, read_ahead_projections=0,
+                            read_ahead_peak_live_bands=0, read_ahead_read_seconds=0.0,
+                            read_ahead_consumer_wait_seconds=0.0)
         try:
             if self._cpu is None:
                 self._cpu = NativeCpuBackend()
@@ -446,7 +449,11 @@ class RuntimeWeights:
 
     def _project_many(self, name, info, vectors, kernel, nvfp4):
         from .runtime_linear import project_many
-        output, counts = project_many(self._reader, name, info, vectors, kernel, nvfp4=nvfp4, ledger=self._ledger)
+        if self._ledger is not None and self._read_ahead is None:
+            from .runtime_read_ahead import ReadAheadPool
+            self._read_ahead = ReadAheadPool()
+        output, counts = project_many(self._reader, name, info, vectors, kernel, nvfp4=nvfp4,
+                                      ledger=self._ledger, read_ahead=self._read_ahead)
         self._counts["linear_calls"] += len(vectors)
         self._counts["cpu_tiles"] += counts["logical_tiles"]
         self._counts["native_nvfp4_bands" if nvfp4 else "native_dense_bands"] += counts["native_band_calls"]
@@ -455,6 +462,13 @@ class RuntimeWeights:
         self._counts["projection_batch_calls"] += 1
         self._counts["projection_batch_vectors"] += len(vectors)
         self._counts["encoded_band_reads"] += counts["band_reads"]
+        io = counts.get("read_ahead", {})
+        if io.get("enabled"):
+            self._counts["read_ahead_projections"] += 1
+            self._counts["read_ahead_peak_live_bands"] = max(
+                self._counts["read_ahead_peak_live_bands"], io["peak_live_bands"])
+            self._counts["read_ahead_read_seconds"] += io["producer_read_seconds"]
+            self._counts["read_ahead_consumer_wait_seconds"] += io["consumer_wait_seconds"]
         return output
 
     def linear_many(self, name, vectors):
@@ -478,11 +492,19 @@ class RuntimeWeights:
                 "weight_quantization_format": self._quant_format, "activation_quantization": "none",
                 "native_w4a4_parity_verified": False,
                 "configured_backend": self.backend, "dense_projections_device": "cpu",
+                "cpu_parallelism": {
+                    "dense_row_band_threads": getattr(self._cpu, "row_band_threads", 1),
+                    "nvfp4_row_band_threads": getattr(self._nv_cpu, "row_band_threads", 0),
+                    "read_ahead_max_producer_threads": 1 if self._read_ahead is not None else 0,
+                    "read_ahead_max_live_bands": 2 if self._read_ahead is not None else 0,
+                    "scope": "Configured maxima; small projections and remaining decoder work can be serial"},
                 "maximum_projection_tiles": MAX_LINEAR_TILES,
                 "output_buffer_ownership": "Caller owns returned FP32 arrays; decoder plan accounts retained activations"}
 
     def close(self):
         if not self._closed:
+            if self._read_ahead is not None:
+                self._read_ahead.close()
             self._reader.close()
             if self._owns_cpu and self._cpu is not None:
                 self._cpu.close()

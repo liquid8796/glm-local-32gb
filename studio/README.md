@@ -1,5 +1,7 @@
 # ModelDesk
 
+**Bản 1.1.1 / core 0.11.1** thêm tùy chọn **Trả lời trực tiếp** trên GUI và `chat --direct-answer` trên CLI. Tùy chọn được bật theo yêu cầu, giữ nguyên lịch sử và mức suy luận đã chọn; nếu model mở lại phần suy luận, ứng dụng vẫn phân tách đúng các phần. Xem [hướng dẫn hội thoại](../docs/CONVERSATION.md).
+
 **Bản 1.1.0 / core 0.11.0** bổ sung chế độ hội thoại có lịch sử, câu trả lời trực tiếp, phần suy luận thu gọn và lệnh CLI `chat`. Mặc định dùng CPU, context 4096, 256 token mới và reasoning low. Lượt chưa hoàn tất vẫn hiển thị để thử lại nhưng không được đưa vào lịch sử tiếp theo. Native CPU xử lý song song theo hàng, SIMD theo lô đầu vào và tái sử dụng K/V có giới hạn. Xem [hướng dẫn hội thoại](../docs/CONVERSATION.md) và build lại native cùng GUI/CLI sau khi cập nhật.
 
 **Bản 1.0.3 / core 0.10.1** sửa đường tính dense BF16/F16/F32 chậm bằng kernel native CPU, thêm bộ đệm đọc trọng số tối đa 8 MiB và tiến độ khởi tạo/token/layer/projection trong nhật ký. Timeout vẫn giới hạn toàn bộ lượt chạy; báo cáo giữ giai đoạn cuối và GUI phân biệt **Hết thời gian chờ** với lỗi thực thi khác. Chạy `build-native.bat` sau khi cập nhật source, rồi build lại GUI/CLI. Các phép tính và giới hạn RAM 32 GB được giữ; planner cộng thêm dung lượng bộ đệm đọc. Tốc độ kernel riêng không phải tốc độ toàn model.

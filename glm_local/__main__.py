@@ -171,6 +171,8 @@ def main(argv=None):
     generate.add_argument("--reasoning-effort", choices=("low", "high", "max"), default=None,
                           help="Chat reasoning effort; template default is max (thinking remains enabled)")
     generate.add_argument("--keep-thinking", action="store_true", help="Retain prior assistant reasoning in chat history")
+    generate.add_argument("--direct-answer", action="store_true",
+                          help="Chat only: explicitly close the assistant thinking prefix; model may still reopen thinking")
     generate.add_argument("--stream-events", action="store_true", help="Emit bounded MODELDESK_EVENT JSON response updates")
     generate.add_argument("--model-directory", type=Path)
     generate.add_argument("--backend", choices=("cpu", "hybrid"), default="cpu")
@@ -203,7 +205,7 @@ def main(argv=None):
                 if not 1 <= args.timeout <= 86400:
                     raise ValueError("Generation timeout must be 1..86400 seconds")
                 if args.tokens is not None:
-                    if args.prompt_format == "chat" or args.reasoning_effort is not None or args.keep_thinking or args.stream_events:
+                    if args.prompt_format == "chat" or args.reasoning_effort is not None or args.keep_thinking or args.stream_events or args.direct_answer:
                         raise ValueError("Token-ID generation does not accept chat or decoded-text streaming options")
                     if len(args.tokens) > 1024 * 1024:
                         raise ValueError("Token argument exceeds 1 MiB")
@@ -213,9 +215,9 @@ def main(argv=None):
                 if args.messages_file is not None and args.prompt_format == "raw":
                     raise ValueError("--messages-file requires chat format")
                 parameters["prompt_format"] = args.prompt_format or ("chat" if args.messages_file is not None else "raw")
-                if parameters["prompt_format"] != "chat" and (args.reasoning_effort is not None or args.keep_thinking):
-                    raise ValueError("Reasoning effort and thinking history options require chat format")
-                parameters["reasoning_effort"] = args.reasoning_effort or "max"
+                if parameters["prompt_format"] != "chat" and (args.reasoning_effort is not None or args.keep_thinking or args.direct_answer):
+                    raise ValueError("Reasoning effort, thinking history and direct-answer options require chat format")
+                parameters["reasoning_effort"] = args.reasoning_effort or ("low" if args.direct_answer else "max")
             action = {"runtime-plan": "plan", "projection-check": "projection", "generate": "generate", "tokenizer-check": "tokenizer"}[args.command]
             return launch_runtime(ROOT, settings, action, parameters)
         if args.command == "metadata-check":

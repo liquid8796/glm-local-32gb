@@ -20,7 +20,7 @@ import sys
 
 from .cpu_probe import (_finite_float32, _NativeRowPool, _prepare_row_batch,
                         _validate_prepared_batch, _is_native_float32_array,
-                        _owned_float32_buffer, MAX_ROW_BATCH)
+                        _owned_float32_buffer, _owned_float32_result, MAX_ROW_BATCH)
 from .cuda_probe import CudaProbeError, CudaTileBackend, MAX_OPERATIONS, _cleanup_errors
 from .nvfp4_blocks import BLOCK, TILE, decode_e4m3_scale
 
@@ -208,7 +208,13 @@ class NativeNVFP4CpuBackend:
         with pool.lock if pool is not None else nullcontext():
             return self._matvec_nvfp4_row_band(packed, rows, cols, scales, vector, global_scale, pool)
 
-    def _matvec_nvfp4_row_band(self, packed, rows, cols, scales, vector, global_scale, pool):
+    def matvec_nvfp4_row_band_array(self, packed, rows, cols, scales, vector, global_scale):
+        """Return an owned finite FP32 array with the same row-band arithmetic."""
+        pool = getattr(self, "_row_pool", None)
+        with pool.lock if pool is not None else nullcontext():
+            return self._matvec_nvfp4_row_band(packed, rows, cols, scales, vector, global_scale, pool, as_array=True)
+
+    def _matvec_nvfp4_row_band(self, packed, rows, cols, scales, vector, global_scale, pool, *, as_array=False):
         dll = self._require_open()
         if type(rows) is not int or not 1 <= rows <= TILE:
             raise ValueError("NVFP4 row band must contain 1..128 rows")
@@ -248,10 +254,8 @@ class NativeNVFP4CpuBackend:
             raise ValueError("Native NVFP4 row-band arithmetic encountered a non-finite FP32 value")
         if status != 0:
             raise RuntimeError(f"Native NVFP4 row-band backend returned unknown status {status}")
-        result = list(output)
-        if not all(math.isfinite(value) for value in result):
-            raise ValueError("Native NVFP4 row band returned non-finite FP32 results")
-        return result
+        return _owned_float32_result(output, as_array=as_array,
+                                    error_message="Native NVFP4 row band returned non-finite FP32 results")
 
     def close(self):
         pool = getattr(self, "_row_pool", None)

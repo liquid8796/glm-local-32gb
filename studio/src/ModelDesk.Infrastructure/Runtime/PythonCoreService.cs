@@ -50,7 +50,7 @@ public sealed class PythonCoreService : IPythonCoreService
         if (chat is not null)
         {
             if (request.Operation != "generate") throw new ArgumentException("Structured chat is supported only for generation.");
-            string[] reserved = ["--prompt", "--tokens", "--messages-file", "--prompt-format", "--reasoning-effort", "--keep-thinking", "--stream-events"];
+            string[] reserved = ["--prompt", "--tokens", "--messages-file", "--prompt-format", "--reasoning-effort", "--keep-thinking", "--direct-answer", "--stream-events"];
             if (arguments.Any(value => value is not null && reserved.Contains(value.Split('=')[0], StringComparer.Ordinal)))
                 throw new ArgumentException("Chat input/format options are owned by the structured conversation request.");
         }
@@ -89,6 +89,7 @@ public sealed class PythonCoreService : IPythonCoreService
             await LocalFiles.AtomicWriteAsync(messagesPath, JsonSerializer.SerializeToUtf8Bytes(chat.Messages, ChatRunOptions.JsonOptions), cancellationToken);
             arguments = [.. arguments, "--messages-file", messagesPath, "--prompt-format", "chat", "--reasoning-effort", chat.ReasoningEffort, "--stream-events"];
             if (chat.KeepThinking) arguments = [.. arguments, "--keep-thinking"];
+            if (chat.DirectAnswer) arguments = [.. arguments, "--direct-answer"];
         }
         var logPath = Path.Combine(runDirectory, "output.log");
         var expected = ExpectedReports(root, reportDirectory, operation.Id).ToArray();

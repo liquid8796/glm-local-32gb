@@ -135,6 +135,15 @@ class ResidencyTests(unittest.TestCase):
             build_plan(config, replace(self.settings,
                 ram_budget_bytes=plan.ram_required_bytes - NVFP4_ROW_BAND_SCRATCH_BYTES))
 
+    def test_read_ahead_buffers_are_charged_before_budget_acceptance(self):
+        from glm_local.runtime_read_ahead import READ_AHEAD_BUFFER_BYTES
+        plan = build_plan(self.config, self.settings)
+        self.assertEqual(dict(plan.cpu_components)["projection_read_ahead_buffers"], READ_AHEAD_BUFFER_BYTES)
+        self.assertEqual(plan.to_dict()["streaming"]["read_ahead_max_live_bands"], 2)
+        with self.assertRaises(BudgetExceededError):
+            build_plan(self.config, replace(self.settings,
+                ram_budget_bytes=plan.ram_required_bytes - READ_AHEAD_BUFFER_BYTES))
+
     def test_context_and_generation_bounds(self):
         plan = build_plan(self.config, self.settings, prompt_tokens=28)
         plan.validate_prompt(32, max_new_tokens=0)

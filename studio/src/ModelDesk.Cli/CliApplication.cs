@@ -93,6 +93,7 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
         var backend = "cpu";
         var reasoning = "low";
         var keepThinking = false;
+        var directAnswer = false;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var index = 0; index < args.Length; index++)
         {
@@ -111,6 +112,7 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
                 case "--backend": backend = Next(args, ref index); break;
                 case "--reasoning": reasoning = Next(args, ref index); break;
                 case "--keep-thinking": keepThinking = true; break;
+                case "--direct-answer": directAnswer = true; break;
                 case "--json": break;
                 default: throw new ArgumentException($"Unknown chat option: {option}");
             }
@@ -126,7 +128,7 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
         IReadOnlyList<ChatMessage> messages = messagesPath is not null
             ? await ReadChatMessagesAsync(messagesPath, cancellationToken)
             : system is null ? [new("user", prompt!)] : [new("system", system), new("user", prompt!)];
-        var chat = new ChatRunOptions(messages, reasoning, keepThinking).ValidateAndSnapshot();
+        var chat = new ChatRunOptions(messages, reasoning, keepThinking, directAnswer).ValidateAndSnapshot();
         var settings = await settingsStore.LoadAsync(cancellationToken);
         if (profile is not null) settings = settings with { Profile = profile.Trim() };
         List<string> arguments = ["--backend", backend, "--context", context.ToString(CultureInfo.InvariantCulture),
@@ -400,10 +402,11 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
         chat (--prompt TEXT | --messages FILE) [--system TEXT]
              [--profile KEY] [--model-directory DIR] [--backend cpu|hybrid]
              [--context TOKENS] [--max-tokens TOKENS] [--timeout SECONDS]
-             [--reasoning low|high|max] [--keep-thinking] [--json]
+             [--reasoning low|high|max] [--keep-thinking] [--direct-answer] [--json]
           Defaults: context 4096, max-tokens 256, timeout 1800, backend cpu, reasoning low.
           Messages file: JSON array, at most 1 MiB; system/user/assistant text only.
           --keep-thinking retains prior reasoning and shows labeled live reasoning on stderr.
+          --direct-answer starts in the answer channel; the model may still emit reasoning.
         core [--profile KEY | --config FILE] OPERATION [PYTHON_ARGUMENTS...]
           doctor, policy-check, monitor, runtime-plan, generate, metadata-check,
           architecture-check, projection-check, tokenizer-check, probe, mini,

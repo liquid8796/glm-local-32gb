@@ -38,9 +38,40 @@ public sealed class CliChatTests
         Assert.Equal(0, await test.App.RunAsync(["chat", "--prompt", "hello"]));
         Assert.Equal(["--backend", "cpu", "--context", "4096", "--generate", "256", "--timeout", "1800"], test.Core.Request!.Arguments);
         Assert.Equal("low", test.Core.Request.Chat!.ReasoningEffort); Assert.False(test.Core.Request.Chat.KeepThinking);
+        Assert.False(test.Core.Request.Chat.DirectAnswer);
         Assert.Equal("Xin chào🙂" + Environment.NewLine, test.Out.ToString());
         Assert.Contains("loading fixture", test.Error.ToString()); Assert.Contains("[Completed]", test.Error.ToString());
         Assert.DoesNotContain("loading fixture", test.Out.ToString());
+    }
+
+    [Theory]
+    [InlineData(null, "low")]
+    [InlineData("high", "high")]
+    [InlineData("max", "max")]
+    public async Task Direct_answer_uses_chat_dto_and_preserves_explicit_reasoning(string? requestedReasoning, string expectedReasoning)
+    {
+        var test = new Fixtures();
+        List<string> args = ["chat", "--prompt", "Trả lời ngắn nhé", "--direct-answer", "--json"];
+        if (requestedReasoning is not null) args.AddRange(["--reasoning", requestedReasoning]);
+        Assert.Equal(0, await test.App.RunAsync(args.ToArray()));
+        var request = Assert.IsType<CoreRunRequest>(test.Core.Request);
+        Assert.True(request.Chat!.DirectAnswer);
+        Assert.Equal(expectedReasoning, request.Chat.ReasoningEffort);
+        Assert.False(request.Chat.KeepThinking);
+        Assert.DoesNotContain("--direct-answer", request.Arguments);
+        using var json = JsonDocument.Parse(test.Out.ToString());
+        Assert.True(json.RootElement.GetProperty("Generation").GetProperty("AssistantResponseComplete").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Direct_answer_flag_as_prompt_text_remains_literal()
+    {
+        var test = new Fixtures();
+        Assert.Equal(0, await test.App.RunAsync(["chat", "--prompt", "--direct-answer", "--json"]));
+        Assert.Equal("--direct-answer", test.Core.Request!.Chat!.Messages[0].Content);
+        Assert.False(test.Core.Request.Chat.DirectAnswer);
+        using var json = JsonDocument.Parse(test.Out.ToString());
+        Assert.Equal(0, json.RootElement.GetProperty("ExitCode").GetInt32());
     }
 
     [Fact]
@@ -72,9 +103,10 @@ public sealed class CliChatTests
         var raw = Encoding.UTF8.GetPreamble().Concat(json).ToArray();
         await File.WriteAllBytesAsync(path, raw);
         var test = new Fixtures();
-        Assert.Equal(0, await test.App.RunAsync(["chat", "--messages", path, "--reasoning", "max", "--keep-thinking"]));
+        Assert.Equal(0, await test.App.RunAsync(["chat", "--messages", path, "--reasoning", "max", "--keep-thinking", "--direct-answer"]));
         Assert.Equal(history, test.Core.Request!.Chat!.Messages);
         Assert.True(test.Core.Request.Chat.KeepThinking);
+        Assert.True(test.Core.Request.Chat.DirectAnswer);
         Assert.Equal(raw, await File.ReadAllBytesAsync(path));
         Assert.DoesNotContain(path, test.Core.Request.Arguments);
         Assert.Equal(0, test.Settings.Saves);
@@ -218,6 +250,7 @@ public sealed class CliChatTests
     [InlineData("--messages", "absent.json", "--system", "system")]
     [InlineData("--prompt", " ")]
     [InlineData("--prompt", "a", "--prompt", "b")]
+    [InlineData("--prompt", "a", "--direct-answer", "--direct-answer")]
     [InlineData("--prompt", "a", "--context", "0")]
     [InlineData("--prompt", "a", "--context", "2147483648")]
     [InlineData("--prompt", "a", "--max-tokens", "0")]

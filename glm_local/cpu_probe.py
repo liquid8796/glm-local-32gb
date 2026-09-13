@@ -51,6 +51,19 @@ def _owned_float32_buffer(values):
     return storage(*values)
 
 
+def _owned_float32_result(output, *, as_array, error_message):
+    """Copy native output without per-element float conversion for array callers."""
+    if as_array:
+        result = array("f")
+        with memoryview(output).cast("B") as raw:
+            result.frombytes(raw)
+    else:
+        result = list(output)
+    if not all(map(math.isfinite, result)):
+        raise ValueError(error_message)
+    return result
+
+
 def _prepare_row_batch(vectors, *, multiple=1):
     if not isinstance(vectors, (list, tuple)) or not 1 <= len(vectors) <= MAX_ROW_BATCH:
         raise ValueError("Native row batch must contain 1..16 input vectors")
@@ -402,7 +415,13 @@ class NativeCpuBackend:
         with pool.lock if pool is not None else nullcontext():
             return self._matvec_dense_row_band(weights, rows, cols, vector, dtype, pool)
 
-    def _matvec_dense_row_band(self, weights, rows, cols, vector, dtype, pool):
+    def matvec_dense_row_band_array(self, weights, rows, cols, vector, dtype):
+        """Return an owned finite FP32 array with the same row-band arithmetic."""
+        pool = getattr(self, "_row_pool", None)
+        with pool.lock if pool is not None else nullcontext():
+            return self._matvec_dense_row_band(weights, rows, cols, vector, dtype, pool, as_array=True)
+
+    def _matvec_dense_row_band(self, weights, rows, cols, vector, dtype, pool, *, as_array=False):
         dll = self._require_open()
         if type(rows) is not int or not 1 <= rows <= MAX_TILE:
             raise ValueError("Dense row band must contain1..128 rows")
@@ -431,7 +450,5 @@ class NativeCpuBackend:
             raise ValueError("Native dense row-band payload or arithmetic encountered non-finite FP32 values")
         if status != 0:
             raise RuntimeError(f"Native dense row-band backend returned status {status}")
-        result = list(output)
-        if not all(math.isfinite(value) for value in result):
-            raise ValueError("Native dense row band returned non-finite FP32 results")
-        return result
+        return _owned_float32_result(output, as_array=as_array,
+                                    error_message="Native dense row band returned non-finite FP32 results")

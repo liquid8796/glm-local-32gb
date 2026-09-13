@@ -13,7 +13,7 @@ public sealed class RunViewModel : ObservableObject
     private readonly List<ChatMessage> history = [];
     private string directory = "", prompt = "", tokens = "", backend = "cpu", context = "4096", generate = "256", timeout = "1800", advanced = "";
     private string promptFormat = "chat", reasoningEffort = "low", historyKey = "";
-    private bool useTokens, keepThinking, sending;
+    private bool useTokens, keepThinking, directAnswer, sending;
     private long version;
     private ConversationTurnViewModel? activeTurn;
     private GenerationAccumulator? activeResponse;
@@ -46,6 +46,7 @@ public sealed class RunViewModel : ObservableObject
     public string PromptFormat { get => promptFormat; set { Set(ref promptFormat, value); Raise(nameof(IsChatInput)); Raise(nameof(SendLabel)); } }
     public string ReasoningEffort { get => reasoningEffort; set => Set(ref reasoningEffort, value); }
     public bool KeepThinking { get => keepThinking; set => Set(ref keepThinking, value); }
+    public bool DirectAnswer { get => directAnswer; set => Set(ref directAnswer, value); }
     public string Backend { get => backend; set => Set(ref backend, value); }
     public string Context { get => context; set => Set(ref context, value); }
     public string Generate { get => generate; set => Set(ref generate, value); }
@@ -79,7 +80,7 @@ public sealed class RunViewModel : ObservableObject
         if (historyKey != key) { history.Clear(); historyKey = key; Raise(nameof(HistorySummary)); }
         var keep = KeepThinking;
         var effort = ReasoningEffort;
-        ChatRunOptions? chat = asChat ? new ChatRunOptions([.. HistoryForRequest(keep), new("user", submitted)], effort, keep).ValidateAndSnapshot() : null;
+        ChatRunOptions? chat = asChat ? new ChatRunOptions([.. HistoryForRequest(keep), new("user", submitted)], effort, keep, DirectAnswer).ValidateAndSnapshot() : null;
         var current = ++version;
         var turn = new ConversationTurnViewModel(wasTokens ? "Token ID: " + submitted : submitted);
         var accumulator = new GenerationAccumulator();

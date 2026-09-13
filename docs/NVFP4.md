@@ -1,4 +1,4 @@
-# GLM NVFP4 — 0.11.0
+# GLM NVFP4 — 0.11.1
 
 Đã thêm `dealignai/GLM-5.3-ABLITERATED-NVFP4` và đặt làm profile mặc định. Revision cố định: `371bdb985d0124e76348c91e4a8fcf3a9d719d09`. Profile FP8 trước đây được giữ tại `config/models/cybersecurity-fp8.json`; NVFP4 tại `config/models/abliterated-nvfp4.json`.
 

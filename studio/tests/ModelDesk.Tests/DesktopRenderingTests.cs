@@ -148,6 +148,11 @@ public sealed class DesktopRenderingTests(ITestOutputHelper output)
                                 Assert.Same(shell.Run.GenerateCommand, sendGesture.Command);
                                 Assert.Contains("lịch sử", Assert.Single(Visuals<TextBox>(page), box => System.Windows.Automation.AutomationProperties.GetName(box) == "Context tokens").ToolTip.ToString());
                                 Assert.Contains("suy nghĩ", Assert.Single(Visuals<TextBox>(page), box => System.Windows.Automation.AutomationProperties.GetName(box) == "Số token sinh thêm").ToolTip.ToString());
+                                var directAnswer = Assert.Single(Visuals<CheckBox>(page), box => System.Windows.Automation.AutomationProperties.GetName(box) == "Trả lời trực tiếp");
+                                Assert.False(directAnswer.IsChecked);
+                                Assert.True(directAnswer.IsEnabled);
+                                Assert.Equal(nameof(RunViewModel.DirectAnswer), System.Windows.Data.BindingOperations.GetBinding(directAnswer, System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty)?.Path.Path);
+                                Assert.Contains("vẫn có thể", directAnswer.ToolTip.ToString());
                                 var answer = Assert.Single(Visuals<TextBox>(page), box => System.Windows.Automation.AutomationProperties.GetName(box) == "Câu trả lời của model");
                                 Assert.Contains("hiển thị ngay", answer.Text);
                                 var transcript = Assert.Single(Visuals<ScrollViewer>(page), ConversationScroll.GetFollowLatest);

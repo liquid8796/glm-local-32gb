@@ -62,6 +62,31 @@ public sealed class PythonChatServiceTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false, "low")]
+    [InlineData(true, "low")]
+    [InlineData(true, "high")]
+    [InlineData(true, "max")]
+    public async Task DirectAnswerIsForwardedOnlyByExplicitChatOption(bool directAnswer, string effort)
+    {
+        var events = new List<ModelStreamEvent>();
+        var request = Request();
+        request = request with { Chat = request.Chat! with { DirectAnswer = directAnswer, ReasoningEffort = effort } };
+        var result = await service.RunAsync(request, new InlineProgress<CoreOutput>(item =>
+        { if (item.StreamEvent is not null) events.Add(item.StreamEvent); }));
+        Assert.Equal(0, result.ExitCode);
+        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(result.ReportPath!));
+        var arguments = report.RootElement.GetProperty("arguments").EnumerateArray().Select(item => item.GetString()).ToArray();
+        Assert.Equal(directAnswer ? 1 : 0, arguments.Count(item => item == "--direct-answer"));
+        Assert.Equal(effort, arguments[Array.IndexOf(arguments, "--reasoning-effort") + 1]);
+        var start = Assert.Single(events, item => item.Event == "response_start");
+        Assert.Equal("chat", start.PromptFormat);
+        Assert.Equal(!directAnswer, start.ThinkingOpen);
+        Assert.True(result.Generation?.AssistantResponseComplete);
+        // A model may reopen reasoning even after the direct-answer prefix.
+        Assert.Equal("Suy nghĩ", result.Generation?.Reasoning);
+    }
+
+    [Theory]
     [InlineData("--partial")]
     [InlineData("--empty-success")]
     [InlineData("--malformed-event")]
@@ -129,6 +154,8 @@ public sealed class PythonChatServiceTests : IDisposable
     [InlineData("--prompt-format=raw")]
     [InlineData("--messages-file")]
     [InlineData("--reasoning-effort")]
+    [InlineData("--direct-answer")]
+    [InlineData("--direct-answer=true")]
     public async Task CompetingInputFlagsAreRejectedBeforeCreatingRunArtifacts(string flag)
     {
         await Assert.ThrowsAsync<ArgumentException>(() => service.RunAsync(Request(flag, "value")));
@@ -148,7 +175,7 @@ public sealed class PythonChatServiceTests : IDisposable
         def emit(value):
             raw=('MODELDESK_EVENT '+json.dumps(value,ensure_ascii=False)+'\n').encode('utf-8')
             for offset in range(0,len(raw),7):os.write(1,raw[offset:offset+7])
-        emit({'event':'response_start','prompt_format':'chat','thinking_open':True})
+        emit({'event':'response_start','prompt_format':'chat','thinking_open':'--direct-answer' not in args})
         text='A😀é final';reasoning='Suy nghĩ';complete=True;status='GENERATED_UNVERIFIED';stop='eos_token';code=0
         if '--empty-success' not in args and '--error-before-token' not in args:
             emit({'event':'output','channel':'reasoning','replace_from_utf16':0,'text':reasoning,'generated_tokens':1})

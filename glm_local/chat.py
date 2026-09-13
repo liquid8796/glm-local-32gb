@@ -106,13 +106,16 @@ def load_chat_template(model_directory, *, model_id, revision, manifest):
             "template_code_executed": False, "scope": "Supported text roles only; no tools or media"}
 
 
-def format_chat_messages(messages, *, reasoning_effort="max", clear_thinking=True, add_generation_prompt=True):
-    """Equivalent to the reviewed template for text system/user/assistant roles."""
+def format_chat_messages(messages, *, reasoning_effort="max", clear_thinking=True, add_generation_prompt=True,
+                         direct_answer=False):
+    """Reviewed text template, with an explicit optional assistant-prefix extension."""
     messages = validate_messages(messages)
     if reasoning_effort not in ("low", "high", "max"):
         raise ValueError("Reasoning effort must be low, high or max")
-    if type(clear_thinking) is not bool or type(add_generation_prompt) is not bool:
+    if type(clear_thinking) is not bool or type(add_generation_prompt) is not bool or type(direct_answer) is not bool:
         raise ValueError("Chat formatting switches must be boolean")
+    if direct_answer and not add_generation_prompt:
+        raise ValueError("Direct answer requires an assistant generation prefix")
     last_user = max((index for index, message in enumerate(messages) if message["role"] == "user"), default=-1)
     pieces = ["[gMASK]<sop><|system|>Reasoning Effort: " + reasoning_effort.capitalize()]
     for index, message in enumerate(messages):
@@ -130,16 +133,28 @@ def format_chat_messages(messages, *, reasoning_effort="max", clear_thinking=Tru
             pieces.append(content.strip())
     if add_generation_prompt:
         pieces.append("<|assistant|><think>")
+        if direct_answer:
+            # The official reviewed template has no thinking-off switch. This
+            # explicit extension closes its generation prefix without adding a reply.
+            pieces.append("</think>")
     rendered = "".join(pieces)
     if len(rendered.encode("utf-8")) > MAX_CHAT_BYTES:
         raise ValueError("Formatted conversation exceeds 1 MiB")
     return rendered
 
 
-def split_assistant_text(text, *, thinking_open=False):
+def split_assistant_text(text, *, thinking_open=False, detect_reopening=False):
     """Separate observed model reasoning from its visible assistant response."""
     if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_RESPONSE_BYTES:
         raise ValueError("Decoded response exceeds its 1-MiB text bound")
+    if detect_reopening:
+        channels = _IncrementalChannels(thinking_open, detect_reopening=True)
+        parts = {"reasoning": [], "assistant": []}
+        for channel, piece in channels.push(text):
+            parts[channel].append(piece)
+        parts["reasoning" if channels.state == "reasoning" else "assistant"].append(channels.pending)
+        return {"reasoning": "".join(parts["reasoning"]), "text": "".join(parts["assistant"]),
+                "thinking_complete": channels.state != "reasoning"}
     if text.startswith("<think>"):
         text = text[len("<think>"):]
         thinking_open = True
@@ -152,11 +167,38 @@ def split_assistant_text(text, *, thinking_open=False):
 
 
 class _IncrementalChannels:
-    def __init__(self, thinking_open):
+    def __init__(self, thinking_open, *, detect_reopening=False):
         self.state = "opening_reasoning" if thinking_open else "detect"
         self.pending = ""
+        self.detect_reopening = detect_reopening
+
+    def _push_reopening(self, chunk):
+        """Direct-prefix output may reopen thinking even after whitespace/text."""
+        emitted = []
+        self.pending += chunk
+        if self.state in ("detect", "opening_reasoning"):
+            self.state = "reasoning" if self.state == "opening_reasoning" else "assistant"
+        while self.pending:
+            marker = "</think>" if self.state == "reasoning" else "<think>"
+            offset = self.pending.find(marker)
+            if offset >= 0:
+                if offset:
+                    emitted.append((self.state, self.pending[:offset]))
+                self.pending = self.pending[offset + len(marker):]
+                self.state = "assistant" if self.state == "reasoning" else "reasoning"
+                continue
+            keep = max((count for count in range(1, min(len(self.pending), len(marker) - 1) + 1)
+                        if self.pending.endswith(marker[:count])), default=0)
+            piece = self.pending[:-keep] if keep else self.pending
+            if piece:
+                emitted.append((self.state, piece))
+            self.pending = self.pending[-keep:] if keep else ""
+            break
+        return emitted
 
     def push(self, chunk):
+        if self.detect_reopening:
+            return self._push_reopening(chunk)
         emitted = []
         def append(channel, text):
             if text:
@@ -193,18 +235,23 @@ class ResponseStreamer:
     The native DecodeStream handles incomplete UTF-8 token boundaries. Only the
     final batch decode reconciles any residual native-decoder differences.
     """
-    def __init__(self, tokenizer, directory, settings, *, prompt_format="raw", enabled=False, event_sink=None):
+    def __init__(self, tokenizer, directory, settings, *, prompt_format="raw", enabled=False, event_sink=None,
+                 thinking_open=None):
+        if thinking_open is not None and type(thinking_open) is not bool:
+            raise ValueError("Initial thinking state must be boolean or unspecified")
         self.tokenizer, self.directory, self.settings = tokenizer, Path(directory), settings
         self.prompt_format, self.enabled = prompt_format, enabled
+        self.thinking_open = prompt_format == "chat" if thinking_open is None else thinking_open
+        self.detect_reopening = prompt_format == "chat" and not self.thinking_open
         self._sink = event_sink
         self._native = tokenizer.decode_stream() if callable(getattr(type(tokenizer), "decode_stream", None)) else None
-        self._channels = _IncrementalChannels(prompt_format == "chat")
+        self._channels = _IncrementalChannels(self.thinking_open, detect_reopening=self.detect_reopening)
         self._sent = {"reasoning": io.StringIO(), "assistant": io.StringIO()}
         self._utf16 = {"reasoning": 0, "assistant": 0}
         self._ids = []
         self._decoded_bytes = 0
         self._last_snapshot = float("-inf")
-        self._emit({"event": "response_start", "prompt_format": prompt_format, "thinking_open": prompt_format == "chat"})
+        self._emit({"event": "response_start", "prompt_format": prompt_format, "thinking_open": self.thinking_open})
 
     def _emit(self, event):
         if self._sink is not None:
@@ -278,6 +325,7 @@ class ResponseStreamer:
         record = {"scope": "partial_generated_response", "model_id": self.settings["model_id"],
             "revision": self.settings["revision"], "run_directory": str(self.directory.resolve()),
             "status": status, "prompt_format": self.prompt_format, "generated_tokens": len(self._ids),
+            "initial_thinking_open": self.thinking_open,
             "text": self._sent["assistant"].getvalue(), "reasoning": self._sent["reasoning"].getvalue(),
             "assistant_response_complete": False, **FULL_MODEL_FLAGS}
         if final is not None:
@@ -291,7 +339,7 @@ class ResponseStreamer:
         if list(token_ids) != self._ids:
             raise ValueError("Generated callback sequence differs from returned token IDs")
         raw = self.tokenizer.decode(token_ids, skip_special_tokens=True)
-        final = split_assistant_text(raw, thinking_open=self.prompt_format == "chat")
+        final = split_assistant_text(raw, thinking_open=self.thinking_open, detect_reopening=self.detect_reopening)
         self._send_edit("reasoning", final["reasoning"])
         self._send_edit("assistant", final["text"])
         eos = [eos_token_ids] if type(eos_token_ids) is int else eos_token_ids or []

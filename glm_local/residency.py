@@ -18,6 +18,7 @@ from .checkpoint_schema import Findings, quantization_format
 from .runtime_io import DEFAULT_ROW_BAND_CACHE_BYTES
 from .nvfp4_execution import NVFP4_ROW_BAND_SCRATCH_BYTES
 from .runtime_linear import DENSE_ROW_BAND_SCRATCH_BYTES, MAX_LINEAR_BATCH
+from .runtime_read_ahead import READ_AHEAD_BUFFER_BYTES
 from .batched_prefill import PREFILL_SCRATCH_BYTES
 from .expanded_cache import DEFAULT_EXPANDED_CACHE_TOKENS
 
@@ -265,6 +266,8 @@ class ResidencyPlan:
                 "persistent_decoded_weight_bytes": 0,
                 "persistent_encoded_weight_bytes": ENCODED_ROW_BAND_CACHE_BYTES,
                 "max_encoded_row_band_cache_bytes": ENCODED_ROW_BAND_CACHE_BYTES,
+                "read_ahead_max_live_bands": 2,
+                "read_ahead_max_payload_bytes": READ_AHEAD_BUFFER_BYTES,
                 "weights_residency": "Active decoded tiles and bounded encoded row bands; no retained full matrix or expert bank",
                 "row_block_assignment": "cpu,cuda alternating" if self.settings.device == "hybrid" else "cpu",
                 "gpu_gate_required_before_work": self.settings.device == "hybrid",
@@ -381,6 +384,7 @@ def build_plan(config, settings, *, prompt_tokens=None, model_id=None, revision=
         ("encoded_row_band_cache", ENCODED_ROW_BAND_CACHE_BYTES),
         ("nvfp4_row_band_scratch", NVFP4_ROW_BAND_SCRATCH_BYTES if quantization_format(config) == "nvfp4" else 0),
         ("dense_row_band_scratch", DENSE_ROW_BAND_SCRATCH_BYTES),
+        ("projection_read_ahead_buffers", READ_AHEAD_BUFFER_BYTES),
         ("projection_batch_vectors", 4 * MAX_LINEAR_BATCH * (largest_rows + largest_cols) + 2 * 65536),
         ("prefill_batch_scratch", PREFILL_SCRATCH_BYTES),
         ("token_activations", activations),

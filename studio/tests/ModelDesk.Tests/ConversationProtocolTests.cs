@@ -14,11 +14,25 @@ public sealed class ConversationProtocolTests
         Assert.Equal("Tiếng Việt 😀", frozen.Messages[0].Content);
         Assert.Equal("low", frozen.ReasoningEffort);
         Assert.False(frozen.KeepThinking);
+        Assert.False(frozen.DirectAnswer);
         foreach (var value in new[] { new ChatMessage("tool", "x"), new ChatMessage("user", "x", "thinking"),
                                      new ChatMessage("user", "<|assistant|>boundary") })
             Assert.Throws<ArgumentException>(() => new ChatRunOptions([value]).ValidateAndSnapshot());
         Assert.Throws<ArgumentException>(() => new ChatRunOptions([new("assistant", "answer")]).ValidateAndSnapshot());
         Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<ChatMessage[]>("[{\"role\":\"user\",\"content\":\"x\",\"tools\":[]}]", ChatRunOptions.JsonOptions));
+    }
+
+    [Fact]
+    public void DirectAnswerIsAnIndependentOptInAndPreservesSupportedReasoningEffort()
+    {
+        foreach (var effort in new[] { "low", "high", "max" })
+        {
+            var options = new ChatRunOptions([new("user", "hello")], effort, DirectAnswer: true).ValidateAndSnapshot();
+            Assert.True(options.DirectAnswer);
+            Assert.Equal(effort, options.ReasoningEffort);
+            Assert.False(options.KeepThinking);
+        }
+        Assert.Throws<ArgumentException>(() => new ChatRunOptions([new("user", "hello")], "none", DirectAnswer: true).ValidateAndSnapshot());
     }
 
     [Fact]

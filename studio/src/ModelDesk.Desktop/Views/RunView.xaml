@@ -63,6 +63,7 @@
               <StackPanel><TextBlock Text="Backend" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/><ComboBox ItemsSource="{Binding Backends}" SelectedItem="{Binding Backend}"/></StackPanel>
               <StackPanel Grid.Column="2"><TextBlock Text="Mức suy luận" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/><ComboBox ItemsSource="{Binding ReasoningEfforts}" SelectedItem="{Binding ReasoningEffort}" IsEnabled="{Binding IsChatInput}" ToolTip="Low giảm mức suy luận nhưng model vẫn có thể suy nghĩ trước khi trả lời. Phần này cũng dùng ngân sách token sinh thêm." AutomationProperties.Name="Mức suy luận"/></StackPanel>
             </Grid>
+            <CheckBox Content="Trả lời trực tiếp" IsChecked="{Binding DirectAnswer}" IsEnabled="{Binding IsChatInput}" Margin="0,12,0,0" ToolTip="Ưu tiên phần trả lời hiển thị ngay. Model vẫn có thể chọn suy nghĩ; giới hạn token vẫn áp dụng." AutomationProperties.Name="Trả lời trực tiếp"/>
             <TextBlock Text="Timeout (giây)" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/><TextBox Text="{Binding Timeout, UpdateSourceTrigger=PropertyChanged}" ToolTip="Giới hạn cho toàn bộ lượt chạy. Nếu hết token hoặc thời gian, tăng giới hạn và gửi lại tin nhắn đang giữ trong ô soạn."/>
             <Button Content="Lập kế hoạch bộ nhớ" Command="{Binding PlanCommand}" Margin="0,14,0,0"/>
             <Expander Header="Thư mục trọng số" Margin="0,13,0,0">

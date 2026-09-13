@@ -11,11 +11,13 @@ public sealed class RunConversationTests
     {
         var (core, _, view) = Fixture();
         Assert.Equal("chat", view.PromptFormat); Assert.Equal("low", view.ReasoningEffort); Assert.Equal("256", view.Generate);
+        Assert.False(view.DirectAnswer);
         view.Prompt = "first 😀";
         var run = view.SendAsync();
         var call = Assert.Single(core.Calls);
         Assert.Equal("generate", call.Request.Operation);
         Assert.Equal("first 😀", Assert.Single(call.Request.Chat!.Messages).Content);
+        Assert.False(call.Request.Chat.DirectAnswer);
         Assert.DoesNotContain("--prompt", call.Request.Arguments);
         call.Emit(new("response_start", PromptFormat: "chat", ThinkingOpen: true));
         call.Emit(new("output", "reasoning", 0, "private model reasoning", 1));
@@ -36,6 +38,32 @@ public sealed class RunConversationTests
         Assert.Equal("A😀é final", core.Calls[1].Request.Chat!.Messages[1].Content);
         core.Calls[1].Finish(Result("second answer"));
         await next;
+    });
+
+    [Fact]
+    public Task DirectAnswerIsSnapshottedPerRunAndKeepsCompletedHistoryRules() => OnDispatcher(async () =>
+    {
+        var (core, _, view) = Fixture(); view.Prompt = "answer directly"; view.DirectAnswer = true;
+        var run = view.SendAsync();
+        var call = Assert.Single(core.Calls);
+        view.DirectAnswer = false;
+        Assert.True(call.Request.Chat!.DirectAnswer);
+        Assert.Equal("low", call.Request.Chat.ReasoningEffort);
+        Assert.DoesNotContain("--direct-answer", call.Request.Arguments);
+        call.Emit(new("response_start", PromptFormat: "chat", ThinkingOpen: false));
+        call.Emit(new("output", "assistant", 0, "Direct answer", 1));
+        await Drain();
+        Assert.Equal("Direct answer", view.Turns[0].Response);
+        call.Finish(Result("Direct answer")); await run;
+        Assert.True(view.Turns[0].IsComplete);
+        Assert.Equal(2, view.ContextMessages.Count);
+        view.Prompt = "next";
+        var next = view.SendAsync();
+        Assert.False(core.Calls[1].Request.Chat!.DirectAnswer);
+        Assert.Equal(3, core.Calls[1].Request.Chat!.Messages.Count);
+        core.Calls[1].Finish(Result("partial", complete: false, exit: 2, stop: "max_tokens")); await next;
+        Assert.Equal("next", view.Prompt);
+        Assert.Equal(2, view.ContextMessages.Count);
     });
 
     [Fact]
@@ -132,15 +160,17 @@ public sealed class RunConversationTests
     [Fact]
     public Task RawTextAndTokenModesStaySeparateFromChatHistory() => OnDispatcher(async () =>
     {
-        var (core, _, view) = Fixture(); view.PromptFormat = "raw"; view.Prompt = "raw input";
+        var (core, _, view) = Fixture(); view.PromptFormat = "raw"; view.Prompt = "raw input"; view.DirectAnswer = true;
         var raw = view.SendAsync(); Assert.Null(core.Calls[0].Request.Chat);
         Assert.Contains("--prompt", core.Calls[0].Request.Arguments);
         Assert.Contains("--stream-events", core.Calls[0].Request.Arguments);
+        Assert.DoesNotContain("--direct-answer", core.Calls[0].Request.Arguments);
         core.Calls[0].Finish(Result("raw output")); await raw; Assert.Empty(view.ContextMessages);
         view.UseTokens = true; view.Tokens = "1,2,3";
         var token = view.SendAsync(); Assert.Null(core.Calls[1].Request.Chat);
         Assert.Contains("--tokens", core.Calls[1].Request.Arguments);
         Assert.DoesNotContain("--stream-events", core.Calls[1].Request.Arguments);
+        Assert.DoesNotContain("--direct-answer", core.Calls[1].Request.Arguments);
         core.Calls[1].Finish(Result("unused") with { Generation = null }); await token;
         Assert.Empty(view.ContextMessages);
     });

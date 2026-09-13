@@ -29,6 +29,16 @@ EXIT_CODES = {"PASS": 0, "ESTIMATE_FITS": 0, "GENERATED_UNVERIFIED": 0,
               "ERROR": 1, "NUMERICAL_MISMATCH": 2, "INCOMPLETE_RESPONSE": 2, "INTERRUPTED": 130}
 
 
+def _direct_answer_option(parameters):
+    direct = parameters.get("direct_answer", False)
+    if type(direct) is not bool:
+        raise ValueError("Direct-answer option must be boolean")
+    prompt_format = parameters.get("prompt_format") or ("chat" if parameters.get("messages_file") else "raw")
+    if direct and (prompt_format != "chat" or parameters.get("tokens") is not None):
+        raise ValueError("Direct-answer mode requires text chat input")
+    return direct
+
+
 def verified_source(root, settings):
     path = reports_directory(root, settings) / "metadata-latest.json"
     analysis = _analyze_source(Path(root), settings, path)
@@ -195,6 +205,7 @@ def _generate(root, settings, parameters, directory, *, progress=None):
     from .chat import (ResponseStreamer, format_chat_messages, load_chat_template,
                        read_messages_file, validate_messages)
     report = progress if progress is not None else lambda *args, **kwargs: None
+    direct_answer = _direct_answer_option(parameters)
     report("metadata_validation")
     source, analysis = verified_source(root, settings)
     report("memory_planning")
@@ -227,13 +238,18 @@ def _generate(root, settings, parameters, directory, *, progress=None):
             report("chat_template_validation")
             chat_receipt = load_chat_template(model_dir, model_id=settings["model_id"],
                 revision=settings["revision"], manifest=prepared["manifest"])
-            effort = parameters.get("reasoning_effort") or "max"
+            effort = parameters.get("reasoning_effort") or ("low" if direct_answer else "max")
             clear_thinking = not parameters.get("keep_thinking", False)
-            text = format_chat_messages(messages, reasoning_effort=effort, clear_thinking=clear_thinking)
+            text = format_chat_messages(messages, reasoning_effort=effort, clear_thinking=clear_thinking,
+                                        direct_answer=direct_answer)
             # The reviewed template already inserts all role/control tokens.
             tokens = tokenizer.encode(text, add_special_tokens=False)
             chat_receipt.update(reasoning_effort=effort, clear_thinking=clear_thinking,
-                                message_count=len(messages), thinking_enabled=True)
+                                message_count=len(messages), thinking_enabled=not direct_answer,
+                                direct_answer=direct_answer)
+            if direct_answer:
+                chat_receipt.update(assistant_prefix_extension="</think>",
+                    thinking_policy="Explicit assistant-prefix extension; the model may reopen thinking")
         else:
             if parameters.get("messages_file"):
                 raise ValueError("Structured messages require chat format")
@@ -241,7 +257,8 @@ def _generate(root, settings, parameters, directory, *, progress=None):
     plan.validate_prompt(len(tokens))
     if tokenizer is not None:
         streamer = ResponseStreamer(tokenizer, directory, settings, prompt_format=prompt_format,
-                                    enabled=parameters.get("stream_events", False))
+                                    enabled=parameters.get("stream_events", False),
+                                    thinking_open=prompt_format == "chat" and not direct_answer)
     ledger = plan.allocator(include_cache=False)
     before = None
     if sys.platform == "win32":
@@ -328,6 +345,8 @@ def launch_runtime(root, settings, action, parameters):
     validate_settings(settings)
     if action not in ("plan", "projection", "generate", "tokenizer"):
         raise ValueError("Unknown runtime action")
+    if action == "generate":
+        _direct_answer_option(parameters)
     identifier = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     report_root = reports_directory(root, settings)
     directory = report_root / action / identifier

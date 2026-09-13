@@ -37,4 +37,14 @@ ModelDesk Release build passed **238/238 tests**, no skips, warnings or errors. 
 
 The complete Python suite ran concurrently with a full-checkpoint probe. Its benchmark timings are explicitly not treated as calibrated comparisons. Detailed receipts remain under `reports/validation/core-v0.11.1-final*` and `reports/studio/tests/studio-tests.trx`.
 
-For context4096 and256 new tokens, the CPU planner estimates 5,449,468,740 bytes including cache capacities and runtime headroom. `reader.cpu_parallelism` reports configured kernel/read-ahead limits, not sustained CPU utilization. The model remains subject to full-checkpoint numerical and broader capability acceptance; these release tests alone do not establish those claims.
+For context 4096 and 256 new tokens, the CPU planner estimates 5,449,468,740 bytes including cache capacities and runtime headroom. `reader.cpu_parallelism` reports configured kernel/read-ahead limits, not sustained CPU utilization. The model remains subject to full-checkpoint numerical and broader capability acceptance; these release tests alone do not establish those claims.
+
+## Full-checkpoint functional smoke
+
+The local NVFP4 checkpoint completed one short history-recall test through all 78 backbone layers. The supplied history was user `Call me An.`, assistant `OK.`, then user `My name? One word.`. Direct-answer mode produced **`An.`**, followed by EOS, with no generated reasoning, `assistant_response_complete=true` and exit code 0. This is one replayed history, not a measurement of several live GUI sessions.
+
+The input contained 29 tokens; output IDs were `[2082, 13, 154827]` (two text tokens plus EOS). Initialization took 44.455 s, prefill 904.078 s, time to the first token 948.532 s, and two decode steps 145.804 s. Total worker time was 1094.522 s (about 18 minutes 15 seconds). Observed decode rate was 0.01372 tokens/s across only those two steps. The model still has very high interactive latency on this machine.
+
+Peak working set was 1,181,495,296 bytes and peak private commit 1,173,565,440 bytes. Measured worker CPU averaged 13.642% of 16 logical processors; both native row-band backends were configured for 8 compute threads. Read-ahead ran 31,848 projections and reached a peak of 2 live bands. The reader returned 344,876,226,936 bytes over the entire test, including reads served by the OS cache; this is not a physical-disk-byte measurement. Read sizes stayed at most 64 KiB and at most 2 shards remained open.
+
+The installed Windows Job confirmed the 70% CPU hard cap, committed-memory limit of 32,000,000,000 bytes and kill-on-close policy. Initial tests/builds overlapped prefill, so these are observed functional-run timings, not an isolated before/after comparison. A single correct reply does not establish full-checkpoint numerical parity, long-context quality or a broader conversation benchmark. [Portable result receipt](direct-answer-full-checkpoint-v0.11.1.json).

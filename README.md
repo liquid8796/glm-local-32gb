@@ -25,6 +25,8 @@ Trình tải hỗ trợ chia đoạn cho file lớn, tối đa bốn kết nối
 
 Bản 0.11.1 đọc trước tối đa hai dải trọng số trong khi CPU tính toán và dùng kết quả FP32 trực tiếp cho từng token. [Kiểm chứng 0.11.1](docs/verification/direct-answer-read-ahead-v0.11.1.md).
 
+Phép thử trên toàn checkpoint đã nhớ đúng tên trong lịch sử và trả **An.** rồi kết thúc bằng EOS. Lượt 29 token đầu vào này mất khoảng 18 phút 15 giây; tool đã có đầu ra hội thoại thật nhưng chưa đạt độ trễ phù hợp để chat nhanh trên máy hiện tại.
+
 Profile NVFP4 vẫn là mặc định; profile FP8 cũ được giữ riêng. Kiểm chứng full-checkpoint và tốc độ thực tế là các bước riêng với kiểm thử kernel/metadata.
 
 Model đang làm việc: `dealignai/GLM-5.3-ABLITERATED-NVFP4`, revision `371bdb985d0124e76348c91e4a8fcf3a9d719d09`. Đã xác minh đủ **282 header, 232.385 tensor, 57.600 bộ weight/scale NVFP4**; metadata và architecture PASS. Reader xử lý expert U8 đóng gói E2M1, scale E4M3 theo nhóm16 và scale toàn tensor F32; attention/shared/dense/MTP giữ BF16.

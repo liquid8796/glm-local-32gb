@@ -2,6 +2,8 @@
 
 Đã thêm `dealignai/GLM-5.3-ABLITERATED-NVFP4` và đặt làm profile mặc định. Revision cố định: `371bdb985d0124e76348c91e4a8fcf3a9d719d09`. Profile FP8 trước đây được giữ tại `config/models/cybersecurity-fp8.json`; NVFP4 tại `config/models/abliterated-nvfp4.json`.
 
+Bản 0.11.1 đã hoàn tất một phép thử hội thoại thật: lịch sử 29 token, chế độ trả lời trực tiếp, model trả đúng tên **An.** rồi EOS, exit 0. Tổng thời gian khoảng 18 phút 15 giây, bộ nhớ working set đỉnh 1,18 GB; tốc độ vẫn rất chậm trên cấu hình này. [Bằng chứng và phạm vi nghiệm thu](verification/direct-answer-read-ahead-v0.11.1.md#full-checkpoint-functional-smoke).
+
 Core 0.11.0 thêm chat template đã kiểm chứng, streaming assistant/reasoning và prefill theo lô. Native CPU xử lý song song theo hàng và SIMD giữa các vector độc lập, giữ thứ tự FP32 của từng kết quả. Reader dùng handle bảo vệ trên Windows để tránh kiểm tra lại filesystem trên mỗi lần đọc khi tệp đang được khóa chống thay đổi. Bộ đệm dải trọng số tối đa 8 MiB, các lần I/O không quá 64 KiB và các cache đều được hạch toán. Xem [hướng dẫn hội thoại](CONVERSATION.md).
 
 NVFP4 trên CPU gom tối đa 128 hàng × 16.384 cột logic vào một lần gọi native; bên trong vẫn tính subtotal 128 cột và cộng FP32 đúng thứ tự cũ. Tối đa 16 vector đầu vào chia sẻ dải trọng số. Scratch NVFP4 5 MiB, dense 33 MiB và workspace prefill 128 MiB được cộng vào planner. Hybrid cũng dùng dải native CPU cho dense; đường expert CUDA vẫn dùng kernel tile. Mặc định chạy CPU; mức tăng tốc một projection không xác nhận tốc độ toàn model.

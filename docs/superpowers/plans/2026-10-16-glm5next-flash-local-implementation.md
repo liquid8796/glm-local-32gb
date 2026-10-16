@@ -10,13 +10,20 @@ BF16/F32, invalid layouts, bounded local safetensors read. Completion requires
 unit suite, Python full regression suite and `git diff --check`.
 Verification on Windows: 7 W4A16 tests passed, complete Python suite 934 tests (65 skipped), .NET ModelDesk suite 309 passed, and staged diff check passed. Explicitly *not* full model generation.
 
-## Task 2 — Real tensor verification (future)
+## Task 2 — Real tensor verification (partial: structure and one expert-row probe on 2026-10-16)
 Files: `glm_local/flash_w4a16.py`, new isolated reader adapter + tests.
 Add synthetic arbitrary-shape catalogue fixtures first; inspect locally
 downloaded pinned shard headers and compare a small real projection against
 independent compressed-tensors dequantization if appropriate dependencies
-exist. Verify file hashes before claiming payload fidelity. No full download
-without the user's space/time decision.
+exist. Verified local 120/120 shard headers and pinned config/index/tokenizer hashes,
+113,074 index-to-shard tensor mappings, and index total_size accounting. One
+real 2048-wide INT4 down_proj row agreed with a NumPy unpack/reference
+calculation (zero absolute difference). See
+docs/verification/flash-w4a16-local-checkpoint-2026-10-16.md. Full weight
+payload SHA-256 and upstream compressed-tensors numerical parity are still
+pending. Never claim full checkpoint payload fidelity from headers alone.
+The user has downloaded all model shards to their chosen E: directory; no
+duplicate download is required.
 
 ## Task 3 — GLM5Next text-only architecture mapper (future)
 Build strict tensor inventory shape/role checks, config-preserving routing,

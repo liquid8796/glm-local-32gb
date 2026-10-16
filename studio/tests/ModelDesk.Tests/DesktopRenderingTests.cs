@@ -187,6 +187,33 @@ public sealed class DesktopRenderingTests(ITestOutputHelper output)
                                 encoder.Save(stream);
                             }
                             AssertReadablePrimaryLabels(surface, theme, views[index]);
+                            if (index == 1)
+                            {
+                                var mcp = Assert.Single(Visuals<CheckBox>(page), box => System.Windows.Automation.AutomationProperties.GetName(box) == "Dùng công cụ Jarvis MCP");
+                                Assert.False(mcp.IsEnabled); Assert.False(mcp.IsChecked);
+                                shell.Run.Backend = "openai";
+                                await DrainAsync(); Layout(surface, size);
+                                Assert.True(mcp.IsEnabled);
+                                mcp.SetCurrentValue(System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty, true);
+                                mcp.GetBindingExpression(System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty)!.UpdateSource();
+                                Assert.True(shell.Run.UseMcp);
+                                if (destination is not null) SaveFrame(surface, size, Path.Combine(destination,
+                                    $"headless-{theme.ToLowerInvariant()}-{(int)size.Width}x{(int)size.Height}-02-run-openai.png"));
+                                shell.Run.Backend = "cpu";
+                                await DrainAsync(); Layout(surface, size);
+                                Assert.False(mcp.IsChecked); Assert.False(mcp.IsEnabled);
+                            }
+                            if (index == 6)
+                            {
+                                var endpoint = Assert.Single(Visuals<TextBox>(page), box => System.Windows.Automation.AutomationProperties.GetName(box) == "OpenAI-compatible base URL");
+                                Assert.Equal(shell.Settings.OpenAiBaseUrl, endpoint.Text);
+                                var scroll = Visuals<ScrollViewer>(page).First();
+                                scroll.ScrollToVerticalOffset(scroll.VerticalOffset + endpoint.TransformToAncestor(scroll).Transform(new Point()).Y - 60);
+                                await DrainAsync(); Layout(surface, size);
+                                if (destination is not null) SaveFrame(surface, size, Path.Combine(destination,
+                                    $"headless-{theme.ToLowerInvariant()}-{(int)size.Width}x{(int)size.Height}-07-settings-endpoints.png"));
+                                scroll.ScrollToTop(); await DrainAsync(); Layout(surface, size);
+                            }
                             frames++;
                         }
                         Assert.Equal(7, tabHashes.Count);
@@ -212,6 +239,15 @@ public sealed class DesktopRenderingTests(ITestOutputHelper output)
                 application.Resources.Clear();
             }
         });
+
+    private static void SaveFrame(FrameworkElement surface, Size size, string path)
+    {
+        var bitmap = new RenderTargetBitmap((int)size.Width, (int)size.Height, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(surface);
+        var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+        encoder.Save(stream);
+    }
 
     private static void Layout(FrameworkElement surface, Size size)
     {

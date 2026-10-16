@@ -148,6 +148,71 @@ public sealed class DesktopViewModelTests
         await Task.CompletedTask;
     });
 
+    [Fact]
+    public Task FlashProfileSelectsServedBackendAndSwitchingBackRestoresNativeDefaults() => OnDispatcher(async () =>
+    {
+        var root = Path.GetTempPath();
+        var settings = new AppSettings { ProjectRoot = root, DefaultDownloadDirectory = root, Profile = "nvfp4" };
+        var shell = new ShellViewModel(new MemorySettings(settings), new EmptyCredentials(), new FakeCore(), new EmptyReports(),
+            new FakeHub(), new ControlledDownloader(), new MemoryQueue());
+        await shell.InitializeAsync();
+        shell.SelectedProfile = new("flash-w4a16", "Flash", "owner/flash", new string('c', 40), "flash.json", "weights-flash", "reports/flash");
+        Assert.Equal("openai", shell.Run.Backend);
+        Assert.Equal("2000", shell.Run.Generate); Assert.Equal("8192", shell.Run.Context);
+        Assert.False(shell.Run.PlanCommand.CanExecute(null));
+        shell.SelectedProfile = shell.Profiles.Single(value => value.Key == "nvfp4");
+        Assert.Equal("cpu", shell.Run.Backend);
+        Assert.Equal("256", shell.Run.Generate); Assert.Equal("4096", shell.Run.Context);
+        Assert.True(shell.Run.PlanCommand.CanExecute(null));
+        await shell.CloseAsync();
+    });
+
+    [Theory]
+    [InlineData("64", 64_000_000_000L)]
+    [InlineData("0.000000001", 1L)]
+    [InlineData("9223372036.854775807", long.MaxValue)]
+    public Task RuntimeSettingsLoadAndSaveEndpointAndEnvironmentNames(string ramGb, long ramBytes) => OnDispatcher(async () =>
+    {
+        var fixture = Directory.CreateTempSubdirectory("ModelDesk-runtime-settings-");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(fixture.FullName, "glm_local"));
+            await File.WriteAllTextAsync(Path.Combine(fixture.FullName, "glm_local", "__main__.py"), "# unexecuted marker");
+            var current = new AppSettings { ProjectRoot = fixture.FullName, DefaultDownloadDirectory = fixture.FullName,
+                OpenAiBaseUrl = "http://127.0.0.1:8000/v1", OpenAiModel = "initial-model",
+                OpenAiApiKeyEnvironmentVariable = "INITIAL_API_KEY", JarvisMcpEndpoint = "http://127.0.0.1:8001/mcp",
+                JarvisMcpTokenEnvironmentVariable = "INITIAL_MCP_TOKEN", RamBudgetBytes = ramBytes };
+            var store = new ModelDesk.Infrastructure.Settings.JsonSettingsStore(Path.Combine(fixture.FullName, "state"));
+            var applied = new TaskCompletionSource<AppSettings>();
+            var view = new SettingsViewModel(store, new EmptyCredentials(), () => current,
+                value => { current = value; applied.TrySetResult(value); return Task.CompletedTask; });
+            view.Load(current);
+            Assert.Equal(ramGb, view.Ram);
+            Assert.Equal("initial-model", view.OpenAiModel);
+            Assert.Equal("INITIAL_API_KEY", view.OpenAiApiKeyEnvironmentVariable);
+            Assert.Equal("INITIAL_MCP_TOKEN", view.JarvisMcpTokenEnvironmentVariable);
+            view.OpenAiBaseUrl = " http://127.0.0.1:9000/v1 "; view.OpenAiModel = " flash-model ";
+            view.OpenAiApiKeyEnvironmentVariable = " TEST_RUNTIME_API_KEY ";
+            view.JarvisMcpEndpoint = " http://127.0.0.1:9001/mcp "; view.JarvisMcpTokenEnvironmentVariable = " TEST_RUNTIME_MCP_TOKEN ";
+            view.Ram = ramGb;
+            view.SaveCommand.Execute(null);
+            var saved = await applied.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal("http://127.0.0.1:9000/v1", saved.OpenAiBaseUrl);
+            Assert.Equal("flash-model", saved.OpenAiModel); Assert.Equal("TEST_RUNTIME_API_KEY", saved.OpenAiApiKeyEnvironmentVariable);
+            Assert.Equal("http://127.0.0.1:9001/mcp", saved.JarvisMcpEndpoint);
+            Assert.Equal("TEST_RUNTIME_MCP_TOKEN", saved.JarvisMcpTokenEnvironmentVariable);
+            Assert.Equal(ramBytes, saved.RamBudgetBytes);
+            Assert.Equal(saved, await store.LoadAsync());
+        }
+        finally
+        {
+            var expected = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath())) + Path.DirectorySeparatorChar;
+            var target = Path.GetFullPath(fixture.FullName);
+            if (!target.StartsWith(expected, StringComparison.OrdinalIgnoreCase)) throw new IOException("Settings test cleanup escaped its temporary root.");
+            fixture.Delete(true);
+        }
+    });
+
     private static DownloadRequest Request(string name) => new("owner/model", new string('a', 40), new(name, 100), Path.GetTempPath());
     private static async Task Until(Func<bool> predicate)
     {

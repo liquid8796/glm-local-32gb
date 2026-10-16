@@ -30,8 +30,10 @@ public sealed class PythonCoreService : IPythonCoreService
             var id = RequiredString(json, "model_id");
             var revision = RequiredString(json, "revision");
             var filename = Path.GetFileNameWithoutExtension(path);
-            var key = filename switch { "abliterated-nvfp4" => "nvfp4", "cybersecurity-fp8" => "fp8", _ => filename };
-            var label = key switch { "nvfp4" => "GLM · NVFP4", "fp8" => "GLM · FP8", _ => id };
+            var key = filename switch { "abliterated-nvfp4" => "nvfp4", "cybersecurity-fp8" => "fp8",
+                "flash-cybersecurity-w4a16" => "flash-w4a16", _ => filename };
+            var label = key switch { "nvfp4" => "GLM · NVFP4", "fp8" => "GLM · FP8",
+                "flash-w4a16" => "GLM Flash · W4A16", _ => id };
             var modelPath = RequiredString(json, "model_directory");
             modelPath = Path.GetFullPath(Path.IsPathRooted(modelPath) ? modelPath : Path.Combine(root, modelPath));
             profiles.Add(new ModelProfile(key, label, id, revision, path, modelPath, ReportDirectory(root, json)));

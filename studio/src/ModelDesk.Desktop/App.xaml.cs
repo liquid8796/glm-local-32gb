@@ -23,7 +23,7 @@ public partial class App : Application
             DiagnosticLog.Initialize(state);
             var credentials = new WindowsCredentialStore(state);
             http = HubHttpClientFactory.Create();
-            var model = new ShellViewModel(new JsonSettingsStore(state), credentials, new PythonCoreService(state), new ReportService(),
+            var model = new ShellViewModel(new JsonSettingsStore(state), credentials, new ModelRuntimeService(new PythonCoreService(state), http), new ReportService(),
                 new HuggingFaceClient(http, credentials), new ModelDownloader(http, credentials), new JsonDownloadQueueStore(state), JsonSettingsStore.CreateDefaults, new LocalModelFileInventory());
             model.ThemeChanged += ThemeManager.Apply;
             ThemeManager.Apply("Dark");

@@ -57,6 +57,22 @@
               <TextBlock Text="Token được mã hóa bằng Windows DPAPI, gắn với tài khoản hiện tại. Giá trị không xuất hiện trong cấu hình hoặc nhật ký." Style="{StaticResource Muted}" FontSize="12" Margin="0,13,0,0" />
             </StackPanel>
           </Border>
+          <Border Style="{StaticResource Panel}" Margin="0,20,0,0">
+            <StackPanel>
+              <TextBlock Text="Model server và Jarvis MCP" Style="{StaticResource SectionTitle}" />
+              <TextBlock Text="OpenAI-compatible base URL" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
+              <TextBox Text="{Binding OpenAiBaseUrl}" AutomationProperties.Name="OpenAI-compatible base URL" />
+              <TextBlock Text="Tên model trên server (để trống để dùng profile)" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding OpenAiModel}" AutomationProperties.Name="Tên model trên server" />
+              <TextBlock Text="Biến môi trường chứa API key" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding OpenAiApiKeyEnvironmentVariable}" AutomationProperties.Name="Biến môi trường API key" />
+              <TextBlock Text="Jarvis MCP endpoint (tùy chọn)" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding JarvisMcpEndpoint}" AutomationProperties.Name="Jarvis MCP endpoint" />
+              <TextBlock Text="Biến môi trường chứa Jarvis access token" Style="{StaticResource FieldLabel}" />
+              <TextBox Text="{Binding JarvisMcpTokenEnvironmentVariable}" AutomationProperties.Name="Biến môi trường Jarvis access token" />
+              <TextBlock Text="Nhập tên biến môi trường; đặt khóa và token trong môi trường chạy ứng dụng. Backend openai gửi hội thoại tới server đã cấu hình. Server quản lý bộ nhớ của model." Style="{StaticResource Muted}" FontSize="12" Margin="0,13,0,0" />
+            </StackPanel>
+          </Border>
         </StackPanel>
         <StackPanel Grid.Column="2">
           <Border Style="{StaticResource Panel}">
@@ -83,7 +99,7 @@
                   <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                  <TextBlock Text="RAM (GB) · tối đa 32" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
+                  <TextBlock Text="RAM (GB)" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
                   <TextBox Text="{Binding Ram}" />
                   <TextBlock Text="GPU index" Style="{StaticResource FieldLabel}" />
                   <TextBox Text="{Binding GpuIndex}" />

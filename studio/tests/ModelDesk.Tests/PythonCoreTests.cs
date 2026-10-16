@@ -43,11 +43,13 @@ public sealed class PythonCoreTests : IDisposable
         Assert.Equal(Path.Combine(_root, "reports", "nvfp4"), profiles[0].ReportDirectory);
     }
 
-    [Fact]
-    public async Task ArgumentsResourcesUtf8AndExitTwoArePreservedWithoutChangingCoreConfig()
+    [Theory]
+    [InlineData(2_000_000_000L)]
+    [InlineData(64_000_000_000L)]
+    public async Task ArgumentsResourcesUtf8AndExitTwoArePreservedWithoutChangingCoreConfig(long ramBudgetBytes)
     {
         string[] arguments = ["--prompt", "Tiếng Việt ' \"quoted\" & | $() %NAME%", "--path", "C:\\model path\\", "--value", "a;b"];
-        var settings = _settings with { RamBudgetBytes = 2_000_000_000, CpuLimitPercent = 25, GpuTargetPercent = 35,
+        var settings = _settings with { RamBudgetBytes = ramBudgetBytes, CpuLimitPercent = 25, GpuTargetPercent = 35,
             RuntimeModelDirectory = Path.Combine(_root, "different model") };
         var messages = new List<CoreOutput>();
         var result = await _service.RunAsync(new CoreRunRequest(settings, "doctor", arguments), new ProgressSink<CoreOutput>(messages.Add));
@@ -59,7 +61,7 @@ public sealed class PythonCoreTests : IDisposable
         using var report = JsonDocument.Parse(await File.ReadAllTextAsync(result.ReportPath));
         Assert.Equal(arguments.Prepend("doctor"), report.RootElement.GetProperty("arguments").EnumerateArray().Select(value => value.GetString()));
         var config = report.RootElement.GetProperty("config");
-        Assert.Equal(2_000_000_000, config.GetProperty("ram_budget_bytes").GetInt64());
+        Assert.Equal(ramBudgetBytes, config.GetProperty("ram_budget_bytes").GetInt64());
         Assert.Equal(25, config.GetProperty("cpu_job_percent").GetInt32());
         Assert.Equal(0.35, config.GetProperty("gpu_average_target").GetDouble());
         Assert.Equal(settings.RuntimeModelDirectory, config.GetProperty("model_directory").GetString());

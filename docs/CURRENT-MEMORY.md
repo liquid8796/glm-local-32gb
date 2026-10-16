@@ -2,6 +2,13 @@
 
 Current release: v0.11.1. Historical verification artifacts retain their original release and dependency versions.
 
+ModelDesk 1.2.0 adds the pinned Flash W4A16 profile through a user-configured
+OpenAI-compatible server, plus Jarvis HTTP/OAuth MCP PC tools. Native inference
+algorithms remain unchanged; RAM validation now accepts positive budgets above
+32 GB while retaining the 32 GB default. External servers own their resource/context
+limits. No new full-model inference or live Jarvis control has been verified.
+See [setup](OPENAI-RUNTIME.md) and [scoped verification](verification/modeldesk-v1.2.0.md).
+
 The0.11.1 direct-answer option is opt-in. It appends only the validated closing-think token154842 after the reviewed chat template's assistant prefix (Hi/low:13normalprompttokens,14directtokens). It is a tool-controlled prefix extension, not an upstream enable_thinking option. Stream parsing handles later thinking re-entry and preserves partial output as incomplete. ModelDesk1.1.1 exposes it in GUI/CLI, defaultfalse.
 
 Core0.11.1 also overlaps a single producer's bounded weight reads with CPU kernels, at most2fullychargedlivebands (planner adds16MiB). It joins/drains before reader handback and supports concurrentclose/error cleanup. Single-vector rowband methods have additional ownedFP32array outputs; publiclistreturning methods remain compatible. Finalvalidation934/934Python and238/238C# passed, no skips;28headlessframes checked. See verification/direct-answer-read-ahead-v0.11.1.md.

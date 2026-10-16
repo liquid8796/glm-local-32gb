@@ -14,10 +14,12 @@ public sealed class SettingsTests : IDisposable
         var store = new JsonSettingsStore(_directory);
         var defaults = await store.LoadAsync();
         Assert.Equal("nvfp4", defaults.Profile);
+        Assert.Equal(32_000_000_000, defaults.RamBudgetBytes);
         Assert.False(string.IsNullOrWhiteSpace(defaults.PythonExecutable));
         Assert.False(File.Exists(store.FilePath));
         var changed = defaults with { CpuLimitPercent = 20, ConcurrentDownloads = 3, GpuTargetPercent = 45,
-            DownloadBytesPerSecond = 1024 * 1024, Theme = "Light", RuntimeModelDirectory = "D:\\Models with spaces" };
+            DownloadBytesPerSecond = 1024 * 1024, Theme = "Light", RuntimeModelDirectory = "D:\\Models with spaces",
+            RamBudgetBytes = 64_000_000_000 };
         await store.SaveAsync(changed);
         Assert.Equal(changed, await store.LoadAsync());
         Assert.Empty(Directory.GetFiles(_directory, "*.tmp"));

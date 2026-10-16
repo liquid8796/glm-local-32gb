@@ -4,8 +4,9 @@ using ModelDesk.Core;
 
 namespace ModelDesk.Cli;
 
-public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceClient hub, IModelDownloader downloader,
-    IPythonCoreService core, IReportService reports, TextWriter? stdout = null, TextWriter? stderr = null)
+public sealed partial class CliApplication(ISettingsStore settingsStore, IHuggingFaceClient hub, IModelDownloader downloader,
+    IPythonCoreService core, IReportService reports, TextWriter? stdout = null, TextWriter? stderr = null,
+    Func<AppSettings, IMcpToolClient>? mcpFactory = null)
 {
     private readonly TextWriter _out = stdout ?? Console.Out;
     private readonly TextWriter _error = stderr ?? Console.Error;
@@ -29,6 +30,7 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
             if (args[0] == "settings") return await SettingsAsync(args[1..], json, cancellationToken);
             if (args[0] == "reports") return await ReportsAsync(args[1..], json, cancellationToken);
             if (args[0] == "chat") return await ChatAsync(args[1..], json, cancellationToken);
+            if (args[0] == "mcp") return await McpAsync(args[1..], json, cancellationToken);
             if (args[0] == "profiles")
             {
                 var settings = await settingsStore.LoadAsync(cancellationToken);
@@ -94,6 +96,7 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
         var reasoning = "low";
         var keepThinking = false;
         var directAnswer = false;
+        var useMcp = false;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var index = 0; index < args.Length; index++)
         {
@@ -113,13 +116,14 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
                 case "--reasoning": reasoning = Next(args, ref index); break;
                 case "--keep-thinking": keepThinking = true; break;
                 case "--direct-answer": directAnswer = true; break;
+                case "--mcp": useMcp = true; break;
                 case "--json": break;
                 default: throw new ArgumentException($"Unknown chat option: {option}");
             }
         }
         if ((prompt is null) == (messagesPath is null)) throw new ArgumentException("Chat requires either --prompt TEXT or --messages FILE.");
         if (messagesPath is not null && system is not null) throw new ArgumentException("--system is only accepted with --prompt; put system messages inside the history file.");
-        if (backend is not ("cpu" or "hybrid")) throw new ArgumentException("Chat backend must be cpu or hybrid.");
+        if (backend is not ("cpu" or "hybrid" or "openai")) throw new ArgumentException("Chat backend must be cpu, hybrid or openai.");
         if (reasoning is not ("low" or "high" or "max")) throw new ArgumentException("Reasoning effort must be low, high or max.");
         if (maximumTokens > context) throw new ArgumentException("--max-tokens must not exceed --context.");
         if (profile is not null && string.IsNullOrWhiteSpace(profile)) throw new ArgumentException("Choose a nonempty profile key.");
@@ -128,7 +132,7 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
         IReadOnlyList<ChatMessage> messages = messagesPath is not null
             ? await ReadChatMessagesAsync(messagesPath, cancellationToken)
             : system is null ? [new("user", prompt!)] : [new("system", system), new("user", prompt!)];
-        var chat = new ChatRunOptions(messages, reasoning, keepThinking, directAnswer).ValidateAndSnapshot();
+        var chat = new ChatRunOptions(messages, reasoning, keepThinking, directAnswer, useMcp).ValidateAndSnapshot();
         var settings = await settingsStore.LoadAsync(cancellationToken);
         if (profile is not null) settings = settings with { Profile = profile.Trim() };
         List<string> arguments = ["--backend", backend, "--context", context.ToString(CultureInfo.InvariantCulture),
@@ -348,12 +352,17 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
             "parallel" => settings with { ConcurrentDownloads = Integer(value, 1, 8, "parallel") },
             "connections" => settings with { DownloadConnectionsPerFile = Integer(value, 1, 4, "connections") },
             "limit-mib" => settings with { DownloadBytesPerSecond = Rate(value) },
-            "ram-mib" => settings with { RamBudgetBytes = checked((long)Integer(value, 1, 30517, "ram-mib") * 1024 * 1024) },
+            "ram-mib" => settings with { RamBudgetBytes = RamBytes(value) },
             "cpu-percent" => settings with { CpuLimitPercent = Integer(value, 1, 70, "cpu-percent") },
             "gpu-index" => settings with { GpuIndex = Integer(value, 0, 64, "gpu-index") },
             "gpu-percent" => settings with { GpuTargetPercent = Number(value, 1, 60, "gpu-percent") },
             "gpu-window" => settings with { GpuWindowSeconds = Integer(value, 1, 3600, "gpu-window") },
             "theme" => settings with { Theme = value },
+            "openai-url" => settings with { OpenAiBaseUrl = value.Trim() },
+            "openai-model" => settings with { OpenAiModel = value.Trim() },
+            "openai-key-env" => settings with { OpenAiApiKeyEnvironmentVariable = value.Trim() },
+            "mcp-url" => settings with { JarvisMcpEndpoint = value.Trim() },
+            "mcp-token-env" => settings with { JarvisMcpTokenEnvironmentVariable = value.Trim() },
             _ => throw new ArgumentException("Unknown settings key. Tokens are configured in the GUI or HF_TOKEN environment variable, never command-line values.")
         };
         settings.Validate();
@@ -384,11 +393,14 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
     private static double Number(string value, double minimum, double maximum, string name) => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
         && double.IsFinite(number) && number >= minimum && number <= maximum ? number : throw new ArgumentException($"{name} must be {minimum}..{maximum}.");
     private static long Rate(string value) => (long)(Number(value, 0, 1_048_576, "limit-mib") * 1024 * 1024);
+    private static long RamBytes(string value) => long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var mib)
+        && mib >= 1 && mib <= long.MaxValue / (1024 * 1024) ? mib * 1024 * 1024
+        : throw new ArgumentException($"ram-mib must be 1..{long.MaxValue / (1024 * 1024)}.");
 
     private sealed class InlineProgress<T>(Action<T> callback) : IProgress<T> { public void Report(T value) => callback(value); }
 
     public const string Help = """
-        ModelDesk CLI — Hugging Face downloads and the existing local Python core
+        ModelDesk CLI — local models, OpenAI-compatible inference and Jarvis MCP
 
         hub search QUERY
         hub details OWNER/MODEL [--revision REV]
@@ -397,16 +409,22 @@ public sealed class CliApplication(ISettingsStore settingsStore, IHuggingFaceCli
         settings show
         settings set KEY VALUE
           Keys: root, python, profile, download-folder, runtime-folder, parallel, connections,
-                limit-mib, ram-mib, cpu-percent, gpu-index, gpu-percent, gpu-window, theme
+                limit-mib, ram-mib, cpu-percent, gpu-index, gpu-percent, gpu-window, theme,
+                openai-url, openai-model, openai-key-env, mcp-url, mcp-token-env
         profiles
         chat (--prompt TEXT | --messages FILE) [--system TEXT]
-             [--profile KEY] [--model-directory DIR] [--backend cpu|hybrid]
+             [--profile KEY] [--model-directory DIR] [--backend cpu|hybrid|openai]
              [--context TOKENS] [--max-tokens TOKENS] [--timeout SECONDS]
-             [--reasoning low|high|max] [--keep-thinking] [--direct-answer] [--json]
+             [--reasoning low|high|max] [--keep-thinking] [--direct-answer] [--mcp] [--json]
           Defaults: context 4096, max-tokens 256, timeout 1800, backend cpu, reasoning low.
           Messages file: JSON array, at most 1 MiB; system/user/assistant text only.
           --keep-thinking retains prior reasoning and shows labeled live reasoning on stderr.
-          --direct-answer starts in the answer channel; the model may still emit reasoning.
+          --direct-answer is native-only; it starts in the answer channel but the model may still emit reasoning.
+          flash-w4a16 uses the configured OpenAI-compatible server; --backend openai also
+          serves other profiles externally. Server manages RAM/GPU; native budgets do not apply.
+          --mcp enables Jarvis tools for an external chat. Requires mcp-url and its bearer token.
+        mcp tools
+        mcp call TOOL_NAME --arguments JSON_FILE
         core [--profile KEY | --config FILE] OPERATION [PYTHON_ARGUMENTS...]
           doctor, policy-check, monitor, runtime-plan, generate, metadata-check,
           architecture-check, projection-check, tokenizer-check, probe, mini,

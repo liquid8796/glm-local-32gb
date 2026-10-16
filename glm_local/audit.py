@@ -1,5 +1,6 @@
 """Explicit readiness gates; no unverified backend is labeled runnable."""
 
+import ctypes
 import math
 import shutil
 from pathlib import Path
@@ -8,8 +9,11 @@ from .metadata import safe_relative_path
 
 
 def validate_settings(settings):
+    ram_budget = settings.get("ram_budget_bytes")
+    size_max = (1 << (8 * ctypes.sizeof(ctypes.c_size_t))) - 1
+    if type(ram_budget) is not int or not 1 <= ram_budget <= size_max:
+        raise ValueError("ram_budget_bytes must be a positive SIZE_T integer")
     bounds = {
-        "ram_budget_bytes": (1, 32_000_000_000),
         "cpu_job_percent": (1, 70),
         "gpu_average_target": (0.01, 0.6),
         "gpu_window_seconds": (1, 3600),
@@ -21,7 +25,7 @@ def validate_settings(settings):
             raise ValueError(f"Invalid {key}")
         if not math.isfinite(value) or not lower <= value <= upper:
             raise ValueError(f"{key} must be in [{lower}, {upper}]")
-    for key in ("ram_budget_bytes", "cpu_job_percent", "disk_reserve_bytes"):
+    for key in ("cpu_job_percent", "disk_reserve_bytes"):
         if type(settings[key]) is not int:
             raise ValueError(f"{key} must be an integer")
     if type(settings.get("gpu_index")) is not int or settings["gpu_index"] < 0:
@@ -89,7 +93,7 @@ def evaluate(settings, snapshot, hardware, project_root):
          "full BF16 fidelity, tie behavior or full-model compatibility."},
         {"code": "RAM_RESIDENT_CAP_UNVERIFIED", "message":
          "Windows Job Object caps committed memory, not total resident memory or OS file cache. "
-         "A 32 GB physical RAM ceiling has not been established."},
+         "The selected committed-memory budget does not establish a physical RAM ceiling."},
         {"code": "GPU_PACING_UNVERIFIED", "message":
          "Cooperative pacing gates experimental streamed GPU projections. The 60% average target "
          "under complete model prefill/decode remains unverified."},

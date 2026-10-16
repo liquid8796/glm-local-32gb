@@ -1,6 +1,6 @@
 # ModelDesk — GUI C# và Python core GLM
 
-Mở `ModelDesk.sln` bằng Visual Studio 2026 hoặc chạy `build-studio.bat -Test`. GUI WPF/.NET 10 có bảy tab quản lý model, kiểm chứng, Hugging Face, tải xuống, báo cáo và cài đặt; CLI dùng chung dịch vụ với GUI. GUI/CLI gọi Python/native core qua cùng các entrypoint. [Hướng dẫn ModelDesk](studio/README.md) · [Kiến trúc source](studio/ARCHITECTURE.md).
+Mở `ModelDesk.sln` bằng Visual Studio 2026 hoặc chạy `build-studio.bat -Test`. GUI WPF/.NET 10 có bảy tab quản lý model, kiểm chứng, Hugging Face, tải xuống, báo cáo và cài đặt; CLI dùng chung dịch vụ với GUI. FP8/NVFP4 dùng Python/native core; ModelDesk **1.2.0** thêm Flash W4A16 qua server OpenAI-compatible, Jarvis MCP và bỏ trần RAM 32 GB (vẫn mặc định 32 GB). [Chạy model Flash](docs/OPENAI-RUNTIME.md) · [Jarvis MCP](docs/JARVIS-MCP.md) · [Hướng dẫn ModelDesk](studio/README.md) · [Kiến trúc source](studio/ARCHITECTURE.md).
 
 ```powershell
 .\modeldesk.bat
@@ -142,12 +142,12 @@ Bản 0.5.0: **301 test đạt**. Reader safetensors đọc đúng byte/dtype/sh
 
 ## Cấu hình đã chốt
 
-Sửa `config/local.json` để thay đổi thư mục model hoặc giảm ngân sách. `model_directory` có thể là đường dẫn tuyệt đối trên ổ khác; đường dẫn tương đối được tính từ thư mục project.
+Sửa `config/local.json` để thay đổi thư mục model hoặc ngân sách RAM dương; không còn trần 32 GB. `model_directory` có thể là đường dẫn tuyệt đối trên ổ khác; đường dẫn tương đối được tính từ thư mục project. Ngân sách này áp dụng cho Python/native; server inference riêng quản lý tài nguyên của nó.
 
 | Yêu cầu | Cấu hình | Mức thực hiện hiện tại |
 |---|---|---|
 | Giữ model FP8 | Revision `5915c1b88f998a9c1e1a0c83688e285a08ae3ca5` | Chỉ tải metadata; chưa tải trọng số |
-| RAM tối đa 32 GB | 32.000.000.000 byte | Job Object giới hạn **committed memory**; chưa chứng minh trần RAM vật lý |
+| RAM do người dùng đặt | Mặc định 32.000.000.000 byte | Job Object giới hạn **committed memory** theo giá trị đã chọn; không phải trần RAM vật lý |
 | CPU tối đa 70% | CPU hard cap 70% cho job | Đã đọc lại policy và kiểm thử tiến trình con |
 | GPU trung bình khoảng 60% | Cửa sổ 10 giây, cho phép tăng ngắn hạn | Pacing đã áp dụng trước mỗi khối GPU trong phép thử nhỏ; chưa kiểm chứng với GLM |
 

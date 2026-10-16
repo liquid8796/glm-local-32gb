@@ -1,6 +1,11 @@
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using System.Windows.Threading;
 using ModelDesk.Core;
 using ModelDesk.Desktop.ViewModels;
+using ModelDesk.Infrastructure.Runtime;
 
 namespace ModelDesk.Tests;
 
@@ -64,6 +69,65 @@ public sealed class RunConversationTests
         core.Calls[1].Finish(Result("partial", complete: false, exit: 2, stop: "max_tokens")); await next;
         Assert.Equal("next", view.Prompt);
         Assert.Equal(2, view.ContextMessages.Count);
+    });
+
+    [Fact]
+    public Task OpenAiChatDoesNotRequireLocalWeightsAndDisablesNativeMemoryPlan() => OnDispatcher(async () =>
+    {
+        var (core, _, view) = Fixture();
+        view.UseTokens = true; view.PromptFormat = "raw"; view.DirectAnswer = true;
+        view.Backend = "openai"; view.ModelDirectory = ""; view.Prompt = "served model";
+        Assert.False(view.UseTokens); Assert.Equal("chat", view.PromptFormat);
+        Assert.False(view.DirectAnswer);
+        Assert.False(view.PlanCommand.CanExecute(null));
+        var run = view.SendAsync();
+        var call = Assert.Single(core.Calls);
+        Assert.Contains("openai", call.Request.Arguments);
+        Assert.DoesNotContain("--model-directory", call.Request.Arguments);
+        call.Finish(Result("server answer")); await run;
+        Assert.Equal("server answer", view.Turns[0].Response);
+    });
+
+    [Fact]
+    public Task JarvisMcpChoiceIsSnapshottedPerRunAndNativeSwitchClearsIt() => OnDispatcher(async () =>
+    {
+        var (core, _, view) = Fixture();
+        view.Backend = "openai"; view.UseMcp = true; view.Prompt = "use tools";
+        var first = view.SendAsync();
+        var call = Assert.Single(core.Calls);
+        view.UseMcp = false;
+        Assert.True(call.Request.Chat!.UseMcp);
+        call.Finish(Result("tool answer")); await first;
+        view.UseMcp = true; view.Backend = "cpu";
+        Assert.False(view.UseMcp); Assert.False(view.CanUseMcp);
+        view.Prompt = "native";
+        var second = view.SendAsync();
+        Assert.False(core.Calls[1].Request.Chat!.UseMcp);
+        Assert.Single(core.Calls[1].Request.Chat!.Messages);
+        core.Calls[1].Finish(Result("native answer")); await second;
+    });
+
+    [Theory]
+    [InlineData("endpoint")]
+    [InlineData("model")]
+    [InlineData("mcp")]
+    public Task ChangingRuntimeIdentityStartsANewConversationContext(string change) => OnDispatcher(async () =>
+    {
+        var core = new FakeCore();
+        var settings = new AppSettings { ProjectRoot = "D:\\synthetic", Profile = "nvfp4" };
+        var task = new CoreTaskViewModel(core, () => settings);
+        var view = new RunViewModel(task) { ModelDirectory = "E:\\shared-model", Prompt = "first" };
+        var first = view.SendAsync(); core.Calls[0].Finish(Result("first answer")); await first;
+        settings = change switch
+        {
+            "endpoint" => settings with { OpenAiBaseUrl = "http://127.0.0.1:9000/v1" },
+            "model" => settings with { OpenAiModel = "different-served-model" },
+            _ => settings with { JarvisMcpEndpoint = "http://127.0.0.1:9001/mcp" }
+        };
+        view.Prompt = "new runtime";
+        var next = view.SendAsync();
+        Assert.Single(core.Calls[1].Request.Chat!.Messages);
+        core.Calls[1].Finish(Result("new answer")); await next;
     });
 
     [Fact]
@@ -217,6 +281,58 @@ public sealed class RunConversationTests
         Assert.Equal("stream only", view.ContextMessages[1].Content);
     });
 
+    [Fact]
+    public Task RealExternalRuntimeCompletesTwoGuiTurnsAndSendsStructuredHistory() => OnDispatcher(async () =>
+    {
+        var fixture = Directory.CreateTempSubdirectory("ModelDesk-external-conversation-");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(fixture.FullName, "glm_local"));
+            await File.WriteAllTextAsync(Path.Combine(fixture.FullName, "glm_local", "__main__.py"), "# unexecuted profile-discovery marker");
+            var profiles = Path.Combine(fixture.FullName, "config", "models"); Directory.CreateDirectory(profiles);
+            await File.WriteAllTextAsync(Path.Combine(profiles, "flash-cybersecurity-w4a16.json"), JsonSerializer.Serialize(new
+            {
+                model_id = "example/flash", revision = new string('a', 40), model_directory = "weights",
+                report_namespace = "flash-w4a16"
+            }));
+            var sent = new List<JsonElement>();
+            using var http = new HttpClient(new ConversationHttpHandler(async request =>
+            {
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+                sent.Add(body.RootElement.Clone());
+                var answer = sent.Count == 1 ? "first external answer" : "second external answer";
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(JsonSerializer.Serialize(new
+                    {
+                        choices = new[] { new { message = new { role = "assistant", content = answer }, finish_reason = "stop" } },
+                        usage = new { completion_tokens = 4 }
+                    }), Encoding.UTF8, "application/json")
+                };
+            }));
+            var settings = new AppSettings { ProjectRoot = fixture.FullName, Profile = "flash-w4a16" };
+            var runtime = new ModelRuntimeService(new PythonCoreService(), http, environmentReader: _ => null);
+            var task = new CoreTaskViewModel(runtime, () => settings);
+            var view = new RunViewModel(task) { Backend = "openai", ModelDirectory = "", Prompt = "first question" };
+            await view.SendAsync();
+            Assert.True(view.Turns[0].IsComplete); Assert.Equal(2, view.ContextMessages.Count);
+            Assert.Equal("first external answer", view.ContextMessages[1].Content);
+            view.Prompt = "second question";
+            await view.SendAsync();
+            Assert.Equal(2, sent.Count); Assert.True(view.Turns[1].IsComplete);
+            var history = sent[1].GetProperty("messages").EnumerateArray().ToArray();
+            Assert.Equal(["user", "assistant", "user"], history.Select(message => message.GetProperty("role").GetString()!).ToArray());
+            Assert.Equal(["first question", "first external answer", "second question"], history.Select(message => message.GetProperty("content").GetString()!).ToArray());
+            Assert.Equal(4, view.ContextMessages.Count);
+        }
+        finally
+        {
+            var expected = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath())) + Path.DirectorySeparatorChar;
+            if (!Path.GetFullPath(fixture.FullName).StartsWith(expected, StringComparison.OrdinalIgnoreCase)) throw new IOException("Conversation test cleanup escaped its temporary root.");
+            fixture.Delete(true);
+        }
+    });
+
     private static (FakeCore Core, CoreTaskViewModel Task, RunViewModel View) Fixture()
     {
         var core = new FakeCore();
@@ -258,5 +374,9 @@ public sealed class RunConversationTests
         internal TaskCompletionSource<CoreRunResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal void Emit(ModelStreamEvent value) => Progress.Report(new(DateTimeOffset.UtcNow, "structured event", StreamEvent: value));
         internal void Finish(CoreRunResult result) => Completion.SetResult(result);
+    }
+    private sealed class ConversationHttpHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> send) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => send(request);
     }
 }

@@ -43,6 +43,8 @@ public sealed class ShellViewModel : ObservableObject
         {
             if (!Set(ref profile, value) || value is null) return;
             current = current with { Profile = value.Key };
+            ConfigureRunBackend();
+            Task.RefreshSettings();
             Run.ModelDirectory = string.IsNullOrWhiteSpace(current.RuntimeModelDirectory) ? Resolve(value.ModelDirectory) : current.RuntimeModelDirectory;
             Validation.ModelDirectory = Run.ModelDirectory;
             Raise(nameof(ModelId)); Raise(nameof(Revision)); Raise(nameof(ProfileDirectory));
@@ -92,6 +94,7 @@ public sealed class ShellViewModel : ObservableObject
     private async Task ApplyAsync(AppSettings settings)
     {
         current = settings; Settings.Load(settings); Profiles.Clear(); Task.IsAvailable = false;
+        Task.RefreshSettings();
         Raise(nameof(PythonStatus)); Raise(nameof(PythonPath)); Raise(nameof(ResourceSummary));
         ThemeChanged?.Invoke(settings.Theme); await Downloads.ApplySettingsAsync();
         var profiles = await System.Threading.Tasks.Task.Run(() => core.GetProfiles(settings.ProjectRoot));
@@ -108,6 +111,18 @@ public sealed class ShellViewModel : ObservableObject
     private async Task RefreshProfileAsync()
     {
         try { await Reports.RefreshAsync(); RefreshReadiness(); } catch (Exception exception) { ShowError(exception); }
+    }
+    private void ConfigureRunBackend()
+    {
+        if (current.Profile == "flash-w4a16")
+        {
+            Run.Backend = "openai"; Run.Generate = "2000"; Run.Context = "8192";
+            Run.UseTokens = false; Run.PromptFormat = "chat";
+        }
+        else if (Run.Backend == "openai")
+        {
+            Run.Backend = "cpu"; Run.Generate = "256"; Run.Context = "4096";
+        }
     }
     private void RefreshReadiness()
     {

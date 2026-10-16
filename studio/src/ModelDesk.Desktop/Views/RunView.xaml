@@ -2,8 +2,8 @@
   <Grid Margin="0,0,12,12">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
     <StackPanel Margin="0,0,0,17">
-      <TextBlock Text="Trò chuyện với model cục bộ" Style="{StaticResource PageTitle}"/>
-      <TextBlock Text="Câu trả lời xuất hiện từng phần. Lượt dừng hoặc chưa hoàn tất được giữ lại để xem và gửi lại." Style="{StaticResource Muted}"/>
+      <TextBlock Text="Trò chuyện với model" Style="{StaticResource PageTitle}"/>
+      <TextBlock Text="{Binding ResponseHint}" Style="{StaticResource Muted}"/>
     </StackPanel>
     <Grid Grid.Row="1">
       <Grid.ColumnDefinitions><ColumnDefinition Width="1.65*"/><ColumnDefinition Width="20"/><ColumnDefinition Width="*" MinWidth="280"/></Grid.ColumnDefinitions>
@@ -56,24 +56,26 @@
             <TextBlock Text="Cấu hình chạy" Style="{StaticResource SectionTitle}"/>
             <TextBlock Text="{Binding ModelDirectory}" ToolTip="{Binding ModelDirectory}" Style="{StaticResource Muted}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" FontSize="11" Margin="0,0,0,4"/>
             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-              <StackPanel><TextBlock Text="Context" Style="{StaticResource FieldLabel}" Margin="0,6,0,4"/><TextBox Text="{Binding Context, UpdateSourceTrigger=PropertyChanged}" ToolTip="Tổng ngân sách token cho lịch sử + tin nhắn hiện tại (kèm mẫu chat) + token sinh thêm." AutomationProperties.Name="Context tokens"/></StackPanel>
+              <StackPanel><TextBlock Text="Context" Style="{StaticResource FieldLabel}" Margin="0,6,0,4"/><TextBox Text="{Binding Context, UpdateSourceTrigger=PropertyChanged}" ToolTip="{Binding ContextHint}" AutomationProperties.Name="Context tokens"/></StackPanel>
               <StackPanel Grid.Column="2"><TextBlock Text="Token sinh thêm" Style="{StaticResource FieldLabel}" Margin="0,6,0,4"/><TextBox Text="{Binding Generate, UpdateSourceTrigger=PropertyChanged}" ToolTip="Giới hạn token mới gồm cả phần suy nghĩ và phần trả lời hiển thị. Token không tương đương chính xác với số từ." AutomationProperties.Name="Số token sinh thêm"/></StackPanel>
             </Grid>
             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
               <StackPanel><TextBlock Text="Backend" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/><ComboBox ItemsSource="{Binding Backends}" SelectedItem="{Binding Backend}"/></StackPanel>
               <StackPanel Grid.Column="2"><TextBlock Text="Mức suy luận" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/><ComboBox ItemsSource="{Binding ReasoningEfforts}" SelectedItem="{Binding ReasoningEffort}" IsEnabled="{Binding IsChatInput}" ToolTip="Low giảm mức suy luận nhưng model vẫn có thể suy nghĩ trước khi trả lời. Phần này cũng dùng ngân sách token sinh thêm." AutomationProperties.Name="Mức suy luận"/></StackPanel>
             </Grid>
-            <CheckBox Content="Trả lời trực tiếp" IsChecked="{Binding DirectAnswer}" IsEnabled="{Binding IsChatInput}" Margin="0,12,0,0" ToolTip="Ưu tiên phần trả lời hiển thị ngay. Model vẫn có thể chọn suy nghĩ; giới hạn token vẫn áp dụng." AutomationProperties.Name="Trả lời trực tiếp"/>
+            <CheckBox Content="Trả lời trực tiếp" IsChecked="{Binding DirectAnswer}" IsEnabled="{Binding CanDirectAnswer}" Margin="0,12,0,0" ToolTip="Ưu tiên phần trả lời hiển thị ngay trên backend native. Model vẫn có thể chọn suy nghĩ; giới hạn token vẫn áp dụng. GLM Flash dùng mẫu suy luận của server." AutomationProperties.Name="Trả lời trực tiếp"/>
+            <CheckBox Content="Dùng công cụ Jarvis MCP" IsChecked="{Binding UseMcp}" IsEnabled="{Binding CanUseMcp}" Margin="0,10,0,0" ToolTip="Dùng endpoint và biến môi trường Jarvis trong Cài đặt. Chỉ dùng khi trò chuyện qua backend openai." AutomationProperties.Name="Dùng công cụ Jarvis MCP"/>
+            <TextBlock Text="Backend openai dùng model server trong Cài đặt. Server quản lý bộ nhớ; giới hạn RAM của ứng dụng áp dụng cho backend native." Style="{StaticResource Muted}" FontSize="11" Margin="0,10,0,0" Visibility="{Binding IsOpenAiBackend, Converter={StaticResource BoolVisibility}}"/>
             <TextBlock Text="Timeout (giây)" Style="{StaticResource FieldLabel}" Margin="0,10,0,4"/><TextBox Text="{Binding Timeout, UpdateSourceTrigger=PropertyChanged}" ToolTip="Giới hạn cho toàn bộ lượt chạy. Nếu hết token hoặc thời gian, tăng giới hạn và gửi lại tin nhắn đang giữ trong ô soạn."/>
             <Button Content="Lập kế hoạch bộ nhớ" Command="{Binding PlanCommand}" Margin="0,14,0,0"/>
-            <Expander Header="Thư mục trọng số" Margin="0,13,0,0">
+            <Expander Header="Thư mục trọng số" Margin="0,13,0,0" IsEnabled="{Binding IsNativeBackend}">
               <DockPanel Margin="0,8,0,0"><Button Content="Chọn…" Command="{Binding BrowseCommand}" DockPanel.Dock="Right" Style="{StaticResource CompactButton}" Margin="8,0,0,0"/><TextBox Text="{Binding ModelDirectory, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Thư mục trọng số"/></DockPanel>
             </Expander>
             <Expander Header="Token ID và tùy chọn nâng cao" Margin="0,17,0,0">
               <StackPanel Margin="0,10,0,0">
                 <TextBlock Text="Định dạng văn bản" Style="{StaticResource FieldLabel}" Margin="0,0,0,4"/>
-                <ComboBox ItemsSource="{Binding PromptFormats}" SelectedItem="{Binding PromptFormat}" IsEnabled="{Binding IsTextInput}" AutomationProperties.Name="Định dạng chat hoặc raw"/>
-                <CheckBox Content="Dùng token ID thay cho văn bản" IsChecked="{Binding UseTokens}"/>
+                <ComboBox ItemsSource="{Binding PromptFormats}" SelectedItem="{Binding PromptFormat}" IsEnabled="{Binding IsNativeBackend}" AutomationProperties.Name="Định dạng chat hoặc raw"/>
+                <CheckBox Content="Dùng token ID thay cho văn bản" IsChecked="{Binding UseTokens}" IsEnabled="{Binding IsNativeBackend}"/>
                 <TextBox Text="{Binding Tokens, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding UseTokens}" ToolTip="Ví dụ: 1,2,3" AutomationProperties.Name="Token ID, phân cách bằng dấu phẩy"/>
                 <CheckBox Content="Gửi lại suy nghĩ trong lịch sử" IsChecked="{Binding KeepThinking}" IsEnabled="{Binding IsChatInput}" Margin="0,12,0,0"/>
                 <TextBlock Text="Đối số Python bổ sung" Style="{StaticResource FieldLabel}"/>

@@ -30,14 +30,16 @@ class WindowsJobTests(unittest.TestCase):
         self.limits = JobLimits(cpu_percent=70, committed_memory_bytes=192 * 1024**2)
 
     def test_installed_policy_is_queried_from_windows(self):
-        limits = JobLimits(cpu_percent=35, committed_memory_bytes=192 * 1024**2)
-        with WindowsJob(limits) as job:
-            policy = job.query_limits()
-            self.assertEqual(policy.cpu_percent, 35)
-            self.assertEqual(policy.committed_memory_bytes, 192 * 1024**2)
-            self.assertTrue(policy.cpu_hard_cap)
-            self.assertTrue(policy.memory_limit_enabled)
-            self.assertTrue(policy.kill_on_close)
+        for budget in (192 * 1024**2, 64_000_000_000):
+            with self.subTest(memory=budget):
+                limits = JobLimits(cpu_percent=35, committed_memory_bytes=budget)
+                with WindowsJob(limits) as job:
+                    policy = job.query_limits()
+                    self.assertEqual(policy.cpu_percent, 35)
+                    self.assertEqual(policy.committed_memory_bytes, budget)
+                    self.assertTrue(policy.cpu_hard_cap)
+                    self.assertTrue(policy.memory_limit_enabled)
+                    self.assertTrue(policy.kill_on_close)
         job.close()  # Closing twice is safe; querying a closed handle is not.
         with self.assertRaises(RuntimeError):
             job.query_limits()

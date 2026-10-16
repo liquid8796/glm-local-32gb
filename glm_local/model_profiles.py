@@ -15,10 +15,11 @@ from .checkpoint_http import strict_json, validate_target
 from .metadata import safe_relative_path
 
 
-PROFILE_NAMES = ("fp8", "nvfp4")
+PROFILE_NAMES = ("fp8", "nvfp4", "flash-w4a16")
 _PROFILES = {
     "fp8": ("cybersecurity-fp8.json", "dealignai/GLM-5.3-CYBERSECURITY-FP8"),
     "nvfp4": ("abliterated-nvfp4.json", "dealignai/GLM-5.3-ABLITERATED-NVFP4"),
+    "flash-w4a16": ("flash-cybersecurity-w4a16.json", "dealignai/GLM-5.3-Flash-CYBERSECURITY-W4A16"),
 }
 _MAX_SETTINGS_BYTES = 64 * 1024
 

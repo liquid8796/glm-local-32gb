@@ -24,10 +24,18 @@ public sealed class CoreContractTests
     {
         new AppSettings().Validate();
         Assert.Throws<ArgumentOutOfRangeException>(() => new AppSettings { CpuLimitPercent = 71 }.Validate());
-        Assert.Throws<ArgumentOutOfRangeException>(() => new AppSettings { RamBudgetBytes = 33_000_000_000 }.Validate());
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AppSettings { RamBudgetBytes = 0 }.Validate());
         Assert.Throws<ArgumentOutOfRangeException>(() => new AppSettings { GpuTargetPercent = double.NaN }.Validate());
         Assert.Throws<ArgumentOutOfRangeException>(() => new AppSettings { DownloadBytesPerSecond = -1 }.Validate());
     }
+
+    [Theory]
+    [InlineData(1L)]
+    [InlineData(32_000_000_001L)]
+    [InlineData(64_000_000_000L)]
+    [InlineData(long.MaxValue)]
+    public void PositiveRamBudgetsAreAcceptedWithoutA32GbCeiling(long bytes) =>
+        new AppSettings { RamBudgetBytes = bytes }.Validate();
 
     [Fact]
     public void CurrentCoreOperationsAreExplicitAndDistinct()

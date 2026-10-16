@@ -11,7 +11,7 @@ public sealed record ChatMessage(
     [property: JsonPropertyName("reasoning_content"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ReasoningContent = null);
 
 public sealed record ChatRunOptions(IReadOnlyList<ChatMessage> Messages, string ReasoningEffort = "low", bool KeepThinking = false,
-    bool DirectAnswer = false)
+    bool DirectAnswer = false, bool UseMcp = false)
 {
     public const int MaximumMessages = 256;
     public const int MaximumBytes = 1024 * 1024;

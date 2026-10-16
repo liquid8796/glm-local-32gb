@@ -25,10 +25,18 @@ public sealed class CoreTaskViewModel(IPythonCoreService service, Func<AppSettin
     public CoreRunResult? LastResult { get; private set; }
     public event EventHandler? Completed;
     public event Action<CoreOutput>? OutputReceived;
+    public bool IsOpenAiBackend => settings().Profile == "flash-w4a16";
     public string ConversationContextKey
     {
-        get { var current = settings(); return current.ProjectRoot + "\n" + current.Profile + "\n" + current.RuntimeModelDirectory; }
+        get
+        {
+            var current = settings();
+            return string.Join("\n", current.ProjectRoot, current.Profile, current.RuntimeModelDirectory,
+                current.OpenAiBaseUrl, current.OpenAiModel, current.OpenAiApiKeyEnvironmentVariable,
+                current.JarvisMcpEndpoint, current.JarvisMcpTokenEnvironmentVariable);
+        }
     }
+    public void RefreshSettings() { Raise(nameof(IsOpenAiBackend)); Raise(nameof(ConversationContextKey)); }
     public ICommand CancelCommand => new RelayCommand(_ => Cancel(), _ => IsBusy);
     public ICommand OpenLogCommand => new RelayCommand(_ => { if (LastResult is not null) DesktopActions.OpenFolder(LastResult.LogPath); }, _ => LastResult is not null);
     public void Cancel() => cancellation?.Cancel();

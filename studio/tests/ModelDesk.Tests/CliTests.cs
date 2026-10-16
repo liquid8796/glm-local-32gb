@@ -103,6 +103,32 @@ public sealed class CliTests
         Assert.Equal(2, fixtures.Settings.Value.DownloadConnectionsPerFile);
     }
 
+    [Theory]
+    [InlineData("65536", 68_719_476_736L)]
+    [InlineData("2147483648", 2_251_799_813_685_248L)]
+    [InlineData("8796093022207", 9_223_372_036_853_727_232L)]
+    public async Task RamSettingAcceptsValuesAbove32GbIncludingBeyondInt32Mib(string mib, long bytes)
+    {
+        var fixtures = new Fixtures();
+        Assert.Equal(0, await fixtures.App.RunAsync(["settings", "set", "ram-mib", mib]));
+        Assert.Equal(bytes, fixtures.Settings.Value.RamBudgetBytes);
+        Assert.Equal(1, fixtures.Settings.Saves);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("1.5")]
+    [InlineData("8796093022208")]
+    [InlineData("9223372036854775808")]
+    public async Task InvalidRamSettingReturnsFailureWithoutChangingSavedBudget(string mib)
+    {
+        var fixtures = new Fixtures();
+        Assert.Equal(1, await fixtures.App.RunAsync(["settings", "set", "ram-mib", mib]));
+        Assert.Equal(32_000_000_000, fixtures.Settings.Value.RamBudgetBytes);
+        Assert.Equal(0, fixtures.Settings.Saves);
+    }
+
     [Fact]
     public async Task CancellationHasDefinedExitCode()
     {

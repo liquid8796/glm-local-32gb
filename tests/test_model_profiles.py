@@ -1,4 +1,4 @@
-"""Checkpoint selection preserves legacy evidence and isolates the NVFP4 model."""
+"""Checkpoint selection isolates evidence and declares external runtime needs."""
 import json
 from pathlib import Path
 import stat
@@ -19,7 +19,7 @@ class BundledProfileTests(unittest.TestCase):
     def test_bundled_profiles_are_pinned_and_preserve_resource_limits(self):
         fp8 = load_profile(PROJECT, "fp8")
         nvfp4 = load_profile(PROJECT, "nvfp4")
-        self.assertEqual(PROFILE_NAMES, ("fp8", "nvfp4"))
+        self.assertEqual(PROFILE_NAMES, ("fp8", "nvfp4", "flash-w4a16"))
         self.assertEqual(fp8["model_id"], "dealignai/GLM-5.3-CYBERSECURITY-FP8")
         self.assertEqual(fp8["revision"], "5915c1b88f998a9c1e1a0c83688e285a08ae3ca5")
         self.assertEqual(nvfp4["model_id"], "dealignai/GLM-5.3-ABLITERATED-NVFP4")
@@ -30,12 +30,59 @@ class BundledProfileTests(unittest.TestCase):
         self.assertNotEqual(fp8["model_directory"], nvfp4["model_directory"])
 
     def test_bundled_profiles_select_independent_metadata_and_reports(self):
-        fp8, nvfp4 = [load_profile(PROJECT, name) for name in PROFILE_NAMES]
+        fp8, nvfp4 = [load_profile(PROJECT, name) for name in ("fp8", "nvfp4")]
         self.assertEqual(metadata_snapshot_path(PROJECT, fp8), PROJECT / "docs/model-metadata.json")
         self.assertEqual(metadata_snapshot_path(PROJECT, nvfp4),
                          PROJECT / "docs/models/abliterated-nvfp4/model-metadata.json")
         self.assertEqual(reports_directory(PROJECT, fp8), PROJECT / "reports")
         self.assertEqual(reports_directory(PROJECT, nvfp4), PROJECT / "reports/nvfp4")
+
+    def test_flash_profile_pins_external_backend_and_isolates_evidence(self):
+        flash = load_profile(PROJECT, "flash-w4a16")
+        self.assertEqual(flash["model_id"], "dealignai/GLM-5.3-Flash-CYBERSECURITY-W4A16")
+        self.assertEqual(flash["revision"], "4c2ee763ff75f3ba50652ee0f024b0b630cd54a0")
+        self.assertEqual(flash["backend_status"], "external_openai_required")
+        self.assertEqual(flash["inference_backend"], "openai")
+        self.assertEqual(flash["served_model_name"], flash["model_id"])
+        self.assertEqual(metadata_snapshot_path(PROJECT, flash),
+                         PROJECT / "docs/models/flash-cybersecurity-w4a16/model-metadata.json")
+        self.assertEqual(reports_directory(PROJECT, flash), PROJECT / "reports/flash-w4a16")
+        self.assertEqual(flash["model_directory"], "models/GLM-5.3-Flash-CYBERSECURITY-W4A16")
+
+    def test_flash_baseline_preserves_actual_architecture_and_native_rejection(self):
+        from glm_local.architecture.mapper import _profile
+        from glm_local.checkpoint_schema import Findings, compare_snapshot, quantization_format
+
+        flash = load_profile(PROJECT, "flash-w4a16")
+        snapshot = json.loads(metadata_snapshot_path(PROJECT, flash).read_text(encoding="utf-8"))
+        architecture = snapshot["architecture"]
+        self.assertEqual(architecture["model_type"], "glm5_next")
+        self.assertEqual(architecture["architectures"], ["Glm5NextForConditionalGeneration"])
+        self.assertEqual(architecture["text_config"]["num_hidden_layers"], 45)
+        self.assertTrue(architecture["text_config"]["mhc"])
+        self.assertIn("linear_attention", architecture["text_config"]["layer_types"])
+        self.assertEqual(architecture["quantization"]["quant_method"], "compressed-tensors")
+        self.assertEqual(architecture["quantization"]["format"], "pack-quantized")
+        group = architecture["quantization"]["config_groups"]["group_0"]
+        self.assertEqual(group["weights"]["num_bits"], 4)
+        self.assertEqual(group["weights"]["group_size"], 32)
+        self.assertIsNone(group["input_activations"])
+        self.assertEqual(snapshot["weight_shards"], 120)
+        self.assertEqual(snapshot["weight_bytes"], 194660869128)
+        self.assertEqual(sum(weight["bytes"] for weight in snapshot["weights"]), snapshot["weight_bytes"])
+        self.assertEqual(len({weight["name"] for weight in snapshot["weights"]}), 120)
+        self.assertFalse(snapshot["verification"]["tensor_payload_read"])
+        self.assertFalse(snapshot["verification"]["native_inference_supported"])
+        self.assertFalse(snapshot["verification"]["external_inference_verified"])
+        config = {key: value for key, value in architecture.items() if key != "quantization"}
+        config["quantization_config"] = architecture["quantization"]
+        sizes = {weight["name"]: weight["bytes"] for weight in snapshot["weights"]}
+        self.assertTrue(compare_snapshot(flash["model_id"], flash["revision"], sizes, config, snapshot)["matched"])
+        findings = Findings()
+        self.assertIsNone(quantization_format(config))
+        self.assertIsNone(_profile(config, findings, model_id=flash["model_id"], revision=flash["revision"]))
+        self.assertIn("UNSUPPORTED_MODEL_TYPE", findings.counts)
+        self.assertIn("UNSUPPORTED_QUANTIZATION_PROFILE", findings.counts)
 
 
 class ProfilePathTests(unittest.TestCase):

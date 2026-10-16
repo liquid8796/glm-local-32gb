@@ -1,6 +1,6 @@
 # Kiến trúc ModelDesk
 
-ModelDesk thêm một lớp C# cho GUI, CLI, trạng thái người dùng và truyền tệp. Python tiếp tục sở hữu việc diễn giải checkpoint, kiểm tra kiến trúc, lập kế hoạch, tokenizer và thực thi model. Adapter gọi các entrypoint hiện có; không chèn code, sửa module hay đổi thuật toán Python để phục vụ giao diện.
+ModelDesk thêm một lớp C# cho GUI, CLI, trạng thái người dùng và truyền tệp. Python sở hữu việc diễn giải checkpoint, kiểm tra kiến trúc, lập kế hoạch, tokenizer và thực thi FP8/NVFP4. `ModelRuntimeService` định tuyến chat Flash W4A16 tới server OpenAI-compatible riêng; `JarvisMcpClient` cung cấp công cụ PC qua HTTP/OAuth. Thuật toán inference Python/native giữ nguyên; validation RAM bỏ trần 32 GB theo yêu cầu người dùng.
 
 ## Các project và chiều phụ thuộc
 
@@ -42,6 +42,12 @@ Một operation Python chạy với thư mục làm việc là project core, the
 Build native, setup reference và reference tests dùng các wrapper cố định của Python project. Những operation này không chấp nhận đối số shell bổ sung. Adapter ghi `config.json`, `output.log`, `run.json` dưới `reports/modeldesk/runs/<id>/`, giữ mã thoát của core và chỉ liên kết báo cáo phù hợp với tác vụ/model/revision hiện tại. `WindowsProcessJob` quản lý vòng đời cây process; các kiểm tra quota nghiệp vụ của Python vẫn thuộc Python core.
 
 Hội thoại dùng `ChatRunOptions` và `ChatMessage` được validate/snapshot trong Core. Service tạo `messages.json` riêng cho từng lượt, không nhận đường dẫn lịch sử do view tự tạo. `MODELDESK_EVENT` được parse thành sự kiện có kiểu, cập nhật theo vị trí UTF-16 và đối chiếu với báo cáo cuối cùng thuộc đúng run. `GenerationResult` phân biệt phần assistant, suy luận, kết thúc hợp lệ và nội dung chưa hoàn tất. `RunViewModel` chỉ lưu các cặp hoàn tất vào context; lỗi/hủy vẫn giữ phần hiển thị và câu hỏi để thử lại. CLI dùng chung port và DTO. Lịch sử ở cấp ứng dụng, còn mỗi lượt vẫn khởi động một worker Python riêng.
+
+## Server inference và Jarvis MCP
+
+`ModelRuntimeService` giữ port `IPythonCoreService`, chuyển FP8/NVFP4 về adapter Python và chuyển chat `flash-w4a16` (hoặc `--backend openai`) tới endpoint HTTP đã cấu hình. Request structured chat dùng model name, ngân sách output và template kwargs. Native resource limits không được áp vào tiến trình server. Response hoàn chỉnh được chuẩn hóa thành cùng các sự kiện/kết quả của GUI/CLI; lượt incomplete không được ghi vào lịch sử. Receipt nằm trong vùng báo cáo của profile và ghi rõ chưa xác minh revision thực trên server.
+
+`IMcpToolClient` cung cấp discovery/call; `JarvisMcpClient` quản lý initialize, session/version headers, JSON/SSE và token OAuth từ biến môi trường. Adapter model chỉ mở MCP khi bật `UseMcp`, dùng schema PC hiện tại, trả observation/ảnh về model và giới hạn một tool mỗi completion, tối đa 12 vòng. Gateway model chỉ cho canonical PC ID; CLI manual cho tool do người dùng chỉ định. Không retry tự động action có thể đã thực hiện. Xem [model server](../docs/OPENAI-RUNTIME.md) và [Jarvis](../docs/JARVIS-MCP.md).
 
 ## Hub, truyền tệp và resume
 

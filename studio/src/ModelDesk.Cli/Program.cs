@@ -10,6 +10,7 @@ using var cancellation = new CancellationTokenSource();
 Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; cancellation.Cancel(); };
 using var http = HubHttpClientFactory.Create();
 var credentials = new WindowsCredentialStore();
+using var runtimeHttp = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = Timeout.InfiniteTimeSpan };
 var application = new CliApplication(new JsonSettingsStore(), new HuggingFaceClient(http, credentials),
-    new ModelDownloader(http, credentials), new PythonCoreService(), new ReportService());
+    new ModelDownloader(http, credentials), new ModelRuntimeService(new PythonCoreService(), runtimeHttp), new ReportService());
 return await application.RunAsync(args, cancellation.Token);

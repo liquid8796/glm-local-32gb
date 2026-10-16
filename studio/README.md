@@ -1,5 +1,7 @@
 # ModelDesk
 
+**Bản 1.2.0** thêm profile `flash-w4a16` cho GLM-5.3-Flash-CYBERSECURITY-W4A16 qua endpoint OpenAI-compatible do người dùng cấu hình, và Jarvis MCP để model gọi công cụ điều khiển PC. RAM không còn trần 32 GB; người dùng đặt ngân sách dương, mặc định vẫn 32 GB. Backend mới cần server inference hỗ trợ kiến trúc `glm5_next`; Python/native hiện tại không chạy model này. [Thiết lập model Flash và giới hạn](../docs/OPENAI-RUNTIME.md) · [Thiết lập Jarvis OAuth/MCP](../docs/JARVIS-MCP.md).
+
 **Bản 1.1.1 / core 0.11.1** thêm tùy chọn **Trả lời trực tiếp** trên GUI và `chat --direct-answer` trên CLI. Tùy chọn được bật theo yêu cầu, giữ nguyên lịch sử và mức suy luận đã chọn; nếu model mở lại phần suy luận, ứng dụng vẫn phân tách đúng các phần. Xem [hướng dẫn hội thoại](../docs/CONVERSATION.md).
 
 **Bản 1.1.0 / core 0.11.0** bổ sung chế độ hội thoại có lịch sử, câu trả lời trực tiếp, phần suy luận thu gọn và lệnh CLI `chat`. Mặc định dùng CPU, context 4096, 256 token mới và reasoning low. Lượt chưa hoàn tất vẫn hiển thị để thử lại nhưng không được đưa vào lịch sử tiếp theo. Native CPU xử lý song song theo hàng, SIMD theo lô đầu vào và tái sử dụng K/V có giới hạn. Xem [hướng dẫn hội thoại](../docs/CONVERSATION.md) và build lại native cùng GUI/CLI sau khi cập nhật.
@@ -14,7 +16,7 @@ Quét thư mục chỉ đọc metadata filesystem (tên và dung lượng) để
 
 **Bản 1.0.1** sửa lỗi mở EXE nhưng không hiện cửa sổ: bỏ chờ đồng bộ trên tác vụ đọc file bất đồng bộ trong quá trình nạp profile. Cửa sổ hiện trước khi nạp workspace, và việc quét profile chạy ngoài luồng UI. Nếu đang dùng bản 1.0.0, build lại hoặc publish lại để thay toàn bộ các DLL đi kèm EXE.
 
-ModelDesk là ứng dụng WPF và CLI cho việc tải model từ Hugging Face, quản lý checkpoint cục bộ và sử dụng Python core GLM hiện có. GUI và CLI dùng chung các service C#; Python/native core sở hữu việc suy luận. Trình tải có thể tải repository ngoài hai profile GLM, nhưng việc tải đủ tệp không xác nhận model đó có thể suy luận bằng Python core này.
+ModelDesk là ứng dụng WPF và CLI cho việc tải model từ Hugging Face, quản lý checkpoint cục bộ và trò chuyện. GUI và CLI dùng chung các service C#; Python/native core thực thi FP8/NVFP4, còn profile Flash dùng server riêng. Trình tải có thể tải repository khác, nhưng việc tải đủ tệp không xác nhận model đó có thể suy luận bằng Python core này.
 
 ## Mở ứng dụng
 
@@ -56,7 +58,7 @@ Mở **Cài đặt**, chọn thư mục Python core, Python executable và thư 
 
 Khi chưa có cấu hình đã lưu, việc tìm core ưu tiên biến môi trường `MODEL_DESK_ROOT`, sau đó kiểm tra các thư mục cha của vị trí ứng dụng và thư mục làm việc, kể cả thư mục con `core/`. Python mặc định là `.venv-reference/Scripts/python.exe` trong core nếu có, nếu không dùng `python` trên PATH. `MODEL_DESK_ROOT` là đầu vào cho việc khám phá mặc định; một cấu hình đã lưu vẫn dùng `ProjectRoot` của nó.
 
-Hai profile đi kèm là `nvfp4` và `fp8`. Profile quyết định model ID, revision, config, trọng số và vùng báo cáo. Đường dẫn trọng số riêng trong Cài đặt có thể thay đường dẫn mặc định cho các tác vụ mới. Cấu hình tài nguyên hiện giữ trần của Python core: tối đa **32 GB RAM thập phân**, **70% CPU**, mục tiêu **60% GPU**. Đây là giá trị cấu hình; đọc báo cáo kiểm chứng để biết giới hạn nào đã được xác minh trên máy.
+Ba profile đi kèm là `nvfp4`, `fp8` và `flash-w4a16`. Profile quyết định model ID, revision, config, trọng số và vùng báo cáo. Đường dẫn trọng số riêng trong Cài đặt có thể thay đường dẫn mặc định cho tác vụ native mới. RAM mặc định **32 GB thập phân**, cho phép ngân sách dương cao hơn theo lựa chọn người dùng. Python/native giữ trần **70% CPU**, mục tiêu **60% GPU**. Server OpenAI-compatible tự quản lý tài nguyên; các giá trị native không giới hạn server đó. Đọc báo cáo kiểm chứng để biết chính sách nào đã được xác minh trên máy.
 
 ## Bảy trang làm việc
 
@@ -137,7 +139,7 @@ Tải riêng các tệp cấu hình nhỏ vào thư mục bạn chọn:
 
 `core --profile` hoặc `core --config` áp dụng cho một lần chạy, đặt **trước tên operation**, và không đổi lựa chọn đã lưu. Config tùy chỉnh phải nằm dưới `config/` của Python project. Sau operation, mọi đối số thuộc Python, kể cả một giá trị có nội dung `--json`; đặt `--json` ở đầu lệnh ModelDesk khi cần output có cấu trúc. Tiến độ khi đó đi ra stderr. Ctrl+C hủy tác vụ và trả mã 130; mã thoát khác của core được giữ nguyên, bao gồm mã 2 cho trường hợp blocked/review.
 
-Các khóa `settings set` còn có `profile`, `runtime-folder`, `ram-mib`, `cpu-percent`, `gpu-index`, `gpu-percent`, `gpu-window` và `theme`. Đơn vị RAM của CLI là MiB; giới hạn 32 GB của core vẫn được áp dụng. `theme` nhận `Dark`, `Light` hoặc `System`.
+Các khóa `settings set` còn có `profile`, `runtime-folder`, `ram-mib`, `cpu-percent`, `gpu-index`, `gpu-percent`, `gpu-window` và `theme`. Đơn vị RAM của CLI là MiB, không còn trần 32 GB. `theme` nhận `Dark`, `Light` hoặc `System`. Backend mới có `openai-url`, `openai-model`, `openai-key-env`, `mcp-url`, `mcp-token-env`; hai khóa `*-env` lưu tên biến môi trường chứa credential, không lưu token.
 
 ## Trạng thái và token
 

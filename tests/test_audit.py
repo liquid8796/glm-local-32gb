@@ -1,5 +1,6 @@
 """Readiness gates use tiny local fixtures and mocked free-space/hardware data."""
 
+import ctypes
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -43,7 +44,8 @@ class SettingsValidationTests(unittest.TestCase):
 
     def test_invalid_budget_limits_and_types_are_rejected(self):
         invalid = {
-            "ram_budget_bytes": (0, 32_000_000_001, 32 * 1024**3, 1.5, True, "32GB"),
+            "ram_budget_bytes": (0, -1, 1 << (8 * ctypes.sizeof(ctypes.c_size_t)),
+                                 10**1000, 1.5, float("nan"), float("inf"), True, "32GB"),
             "cpu_job_percent": (0, 71, 70.5, True),
             "gpu_average_target": (0, 0.601, float("nan"), float("inf"), True),
             "gpu_window_seconds": (0, 3601, float("-inf"), True),
@@ -57,6 +59,14 @@ class SettingsValidationTests(unittest.TestCase):
                 configuration[key] = value
                 with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                     audit.validate_settings(configuration)
+
+    def test_positive_ram_budgets_above_32_gb_fit_the_native_job_limit(self):
+        size_max = (1 << (8 * ctypes.sizeof(ctypes.c_size_t))) - 1
+        for value in (32_000_000_001, 32 * 1024**3, 64_000_000_000, size_max):
+            configuration = settings()
+            configuration["ram_budget_bytes"] = value
+            with self.subTest(value=value):
+                audit.validate_settings(configuration)
 
     def test_missing_required_budget_is_rejected(self):
         for key in ("ram_budget_bytes", "cpu_job_percent", "gpu_average_target",

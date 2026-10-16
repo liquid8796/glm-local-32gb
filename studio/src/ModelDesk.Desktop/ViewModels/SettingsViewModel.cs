@@ -12,6 +12,7 @@ public sealed class SettingsViewModel : ObservableObject
     private readonly Func<AppSettings> current;
     private readonly Func<AppSettings, Task> apply;
     private string root = "", python = "", downloads = "", runtime = "", theme = "Dark", speed = "0", concurrent = "2", connections = "4", ram = "32", cpu = "70", gpu = "0", target = "60", window = "10", message = "", tokenStatus = "Chưa kiểm tra token";
+    private string openAiBaseUrl = "", openAiModel = "", openAiApiKeyEnvironmentVariable = "", jarvisMcpEndpoint = "", jarvisMcpTokenEnvironmentVariable = "";
     public SettingsViewModel(ISettingsStore store, ICredentialStore credentials, Func<AppSettings> current, Func<AppSettings, Task> apply, Func<AppSettings>? discover = null)
     {
         this.store = store; this.credentials = credentials; this.current = current; this.apply = apply;
@@ -54,6 +55,11 @@ public sealed class SettingsViewModel : ObservableObject
     public string GpuIndex { get => gpu; set => Set(ref gpu, value); }
     public string GpuTarget { get => target; set => Set(ref target, value); }
     public string GpuWindow { get => window; set => Set(ref window, value); }
+    public string OpenAiBaseUrl { get => openAiBaseUrl; set => Set(ref openAiBaseUrl, value); }
+    public string OpenAiModel { get => openAiModel; set => Set(ref openAiModel, value); }
+    public string OpenAiApiKeyEnvironmentVariable { get => openAiApiKeyEnvironmentVariable; set => Set(ref openAiApiKeyEnvironmentVariable, value); }
+    public string JarvisMcpEndpoint { get => jarvisMcpEndpoint; set => Set(ref jarvisMcpEndpoint, value); }
+    public string JarvisMcpTokenEnvironmentVariable { get => jarvisMcpTokenEnvironmentVariable; set => Set(ref jarvisMcpTokenEnvironmentVariable, value); }
     public string Message { get => message; private set => Set(ref message, value); }
     public string TokenStatus { get => tokenStatus; private set => Set(ref tokenStatus, value); }
     public string SettingsPath => store.FilePath;
@@ -70,8 +76,10 @@ public sealed class SettingsViewModel : ObservableObject
         ProjectRoot = value.ProjectRoot; PythonExecutable = value.PythonExecutable; DownloadDirectory = value.DefaultDownloadDirectory; RuntimeDirectory = value.RuntimeModelDirectory; Theme = value.Theme;
         Speed = (value.DownloadBytesPerSecond / 1048576d).ToString("0.###", CultureInfo.InvariantCulture); Concurrent = value.ConcurrentDownloads.ToString(CultureInfo.InvariantCulture);
         ConnectionsPerFile = value.DownloadConnectionsPerFile.ToString(CultureInfo.InvariantCulture);
-        Ram = (value.RamBudgetBytes / 1_000_000_000d).ToString("0.###", CultureInfo.InvariantCulture); Cpu = value.CpuLimitPercent.ToString(CultureInfo.InvariantCulture);
+        Ram = (value.RamBudgetBytes / 1_000_000_000m).ToString("0.#########", CultureInfo.InvariantCulture); Cpu = value.CpuLimitPercent.ToString(CultureInfo.InvariantCulture);
         GpuIndex = value.GpuIndex.ToString(CultureInfo.InvariantCulture); GpuTarget = value.GpuTargetPercent.ToString(CultureInfo.InvariantCulture); GpuWindow = value.GpuWindowSeconds.ToString(CultureInfo.InvariantCulture);
+        OpenAiBaseUrl = value.OpenAiBaseUrl; OpenAiModel = value.OpenAiModel; OpenAiApiKeyEnvironmentVariable = value.OpenAiApiKeyEnvironmentVariable;
+        JarvisMcpEndpoint = value.JarvisMcpEndpoint; JarvisMcpTokenEnvironmentVariable = value.JarvisMcpTokenEnvironmentVariable;
     }
     public async Task InspectTokenAsync() => TokenStatus = string.IsNullOrEmpty(await credentials.GetTokenAsync()) ? "Chưa lưu token · model công khai không cần token" : "Đã lưu token mã hóa cho tài khoản Windows hiện tại";
     public async Task SaveTokenAsync(string token)
@@ -86,7 +94,9 @@ public sealed class SettingsViewModel : ObservableObject
             ProjectRoot = ProjectRoot.Trim(), PythonExecutable = PythonExecutable.Trim(), DefaultDownloadDirectory = DownloadDirectory.Trim(), RuntimeModelDirectory = RuntimeDirectory.Trim(), Theme = Theme,
             DownloadBytesPerSecond = checked((long)(Number(Speed, "Tốc độ tải") * 1048576)), ConcurrentDownloads = Integer(Concurrent, "Số tải đồng thời"),
             DownloadConnectionsPerFile = Integer(ConnectionsPerFile, "Kết nối trên mỗi tệp"),
-            RamBudgetBytes = checked((long)(Number(Ram, "RAM") * 1_000_000_000)), CpuLimitPercent = Integer(Cpu, "CPU"), GpuIndex = Integer(GpuIndex, "GPU index"), GpuTargetPercent = Number(GpuTarget, "GPU target"), GpuWindowSeconds = Integer(GpuWindow, "GPU window")
+            RamBudgetBytes = RamBytes(Ram), CpuLimitPercent = Integer(Cpu, "CPU"), GpuIndex = Integer(GpuIndex, "GPU index"), GpuTargetPercent = Number(GpuTarget, "GPU target"), GpuWindowSeconds = Integer(GpuWindow, "GPU window"),
+            OpenAiBaseUrl = OpenAiBaseUrl.Trim(), OpenAiModel = OpenAiModel.Trim(), OpenAiApiKeyEnvironmentVariable = OpenAiApiKeyEnvironmentVariable.Trim(),
+            JarvisMcpEndpoint = JarvisMcpEndpoint.Trim(), JarvisMcpTokenEnvironmentVariable = JarvisMcpTokenEnvironmentVariable.Trim()
         };
         value.Validate();
         if (string.IsNullOrWhiteSpace(value.ProjectRoot) || !Directory.Exists(value.ProjectRoot)) throw new ArgumentException("Thư mục Python core chưa tồn tại.");
@@ -96,4 +106,13 @@ public sealed class SettingsViewModel : ObservableObject
     }
     private static double Number(string value, string label) => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) && number >= 0 ? number : throw new ArgumentException(label + " phải là số không âm (dùng dấu chấm thập phân).");
     private static int Integer(string value, string label) => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) ? number : throw new ArgumentException(label + " phải là số nguyên.");
+    private static long RamBytes(string value)
+    {
+        if (!decimal.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var gb) ||
+            gb <= 0 || gb > long.MaxValue / 1_000_000_000m)
+            throw new ArgumentException("RAM phải là số GB dương trong phạm vi hỗ trợ (dùng dấu chấm thập phân).");
+        var bytes = gb * 1_000_000_000m;
+        if (decimal.Truncate(bytes) != bytes) throw new ArgumentException("RAM phải tương ứng với số byte nguyên.");
+        return (long)bytes;
+    }
 }
